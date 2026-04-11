@@ -1,35 +1,99 @@
 # =============================================================================
 # Repo-level .gitignore
 # =============================================================================
+#
+# Sub-directories may have their own .gitignore with additional rules:
+#   frontend/.gitignore            Flutter defaults + web-build whitelist
+#   frontend/macos/.gitignore      Flutter macOS wrapper defaults
+#   model/.idea/.gitignore         JetBrains IDE (legacy, historical)
+#   model/eye_tracker/.idea/.gitignore (same)
+#
+# Notable intentional INCLUDES (things you might expect to be ignored but
+# aren't, because the project needs them at build / run time):
+#   frontend/assets/fonts/*.otf    Noto Sans SC bundled font (Flutter Web)
+#   frontend/build/web/            Pre-built web bundle (non-dev users)
+#   model/eye_tracker/model_pth/affnet.pth.tar   Deep model weights
+#   model/eye_tracker/stimuli/     Sternberg distractor images
 
+# =============================================================================
 # Python
+# =============================================================================
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
+*.py[cod]
+*$py.class
 *.egg
 *.egg-info/
+.Python
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+*.sqlite
+*.sqlite3
+*.db
 
-# Virtualenv (managed by start.py)
+# =============================================================================
+# Virtualenv + auto-installed tools (managed by start.py)
+# =============================================================================
 .venv/
-
-# Auto-installed Flutter SDK + downloads (managed by start.py)
+venv/
+env/
 tools/
 
-# OS junk
-.DS_Store
-Thumbs.db
+# =============================================================================
+# Build / dist artifacts (root-level only — frontend has its own rules)
+# =============================================================================
+/dist/
+/build/
 
-# Editor / IDE
+# =============================================================================
+# Operating system junk
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# =============================================================================
+# Editors / IDEs
+# =============================================================================
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.classpath
+*.sublime-workspace
+*.sublime-project
 
-# Per-user app data (engine writes session_logs / data.db here on macOS only)
-# (these live in ~/Library/Application Support/adhd_app, NOT the repo, but
-# document the path here for clarity)
+# =============================================================================
+# Logs
+# =============================================================================
+*.log
+logs/
 
-# Frontend build outputs are intentionally NOT excluded — see frontend/.gitignore
+# =============================================================================
+# Per-user runtime data
+# =============================================================================
+# The engine writes session_logs / data.db to the platform user-data dir
+# (~/Library/Application Support/adhd_app/ on macOS,
+#  %APPDATA%/adhd_app/ on Windows), NEVER to the repo. But if anyone
+# creates these in the repo by accident, ignore them.
+session_logs/
+adhd_data/
+data.db
+
+# =============================================================================
+# Engine output (one-off manual experiments)
+# =============================================================================
+model/eye_tracker/task_data/

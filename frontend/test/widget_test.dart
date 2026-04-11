@@ -18,7 +18,7 @@ void main() {
     await tester.pumpWidget(AdhdShellApp(engine: engine, state: state));
 
     // Top app bar title is rendered
-    expect(find.text('ADHD 早筛与训练系统'), findsOneWidget);
+    expect(find.text('ADHD 早筛与训练'), findsOneWidget);
 
     // Bottom navigation has 4 destinations
     expect(find.text('被试'), findsOneWidget);

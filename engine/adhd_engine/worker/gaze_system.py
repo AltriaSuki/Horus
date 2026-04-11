@@ -668,46 +668,82 @@ class GazeSystem:
             print(f"[gaze_system] ipc_publisher raised: {exc}")
 
     def _draw_cali_point(self, point, idx, total, status="请点击圆点"):
-        # Soft dark blue-grey background — easier on the eyes than the
-        # near-black we used to have here, and clearly distinct from the
-        # pure-black backgrounds the trial phases require.
-        self.screen.fill((45, 55, 70))
+        """Warm kid-friendly calibration screen.
 
-        # Centered top banner so the user always sees status text regardless
-        # of where the calibration dot lives. Banner has its own background
-        # so the text is never lost on a busy display.
-        banner = self.ui_font.render(
-            f"[{idx}/{total}] {status}", True, (255, 255, 255))
+        The Flutter front-end uses a warm palette (see frontend/lib/theme/
+        app_colors.dart): primary #FF8C42 柚子橘, secondary #4ECDC4 清新蓝绿,
+        tertiary #FFD166 乳黄, cream background #FFF8F0. We echo the same
+        palette here so kids see visual continuity when the pygame window
+        pops up on top of the Flutter shell.
+        """
+        # Warm dark — kept relatively dark so the pupil is in roughly the
+        # same state as during the trial phase (which MUST be paradigm-dark).
+        # We shift from the previous cold (45,55,70) to a warm tone of
+        # similar luminance.
+        self.screen.fill((55, 45, 40))
+
+        # Top banner — warm orange like the Flutter primary
+        banner_text = f"[{idx}/{total}]  {status}"
+        banner = self.ui_font.render(banner_text, True, (255, 255, 255))
         bw, bh = banner.get_size()
         bx = (self.sw - bw) // 2
         by = 60
+        # Soft shadow behind the banner for depth
+        shadow_rect = pygame.Rect(bx - 26, by - 10, bw + 52, bh + 28)
         pygame.draw.rect(
-            self.screen, (40, 80, 140),
-            pygame.Rect(bx - 24, by - 12, bw + 48, bh + 24),
-            border_radius=12,
+            self.screen, (0, 0, 0),
+            shadow_rect.move(0, 4),
+            border_radius=20,
+        )
+        # Orange banner card
+        pygame.draw.rect(
+            self.screen, (255, 140, 66),  # #FF8C42
+            pygame.Rect(bx - 26, by - 12, bw + 52, bh + 28),
+            border_radius=20,
         )
         self.screen.blit(banner, (bx, by))
 
-        # Sub-banner: instruction
+        # Sub-banner: friendly hint
         sub = self.ui_font.render(
-            "按 ESC 退出", True, (180, 180, 200))
-        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 30))
+            "按 ESC 可以退出", True, (255, 221, 190))
+        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 26))
 
-        # Pulsing target dot
-        pulse = int(6 * abs(np.sin(time.time() * 3)))
+        # Pulsing target dot — in #4ECDC4 mint (secondary)
+        pulse = int(8 * abs(np.sin(time.time() * 3)))
+        # Outer glow
+        glow_radius = POINT_RADIUS + 28 + pulse
+        glow_surface = pygame.Surface(
+            (glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
         pygame.draw.circle(
-            self.screen, (40, 120, 200), point,
-            POINT_RADIUS + 14 + pulse, width=4)
+            glow_surface, (78, 205, 196, 60),
+            (glow_radius, glow_radius), glow_radius)
+        self.screen.blit(
+            glow_surface, (point[0] - glow_radius, point[1] - glow_radius))
+        # Outer ring
+        pygame.draw.circle(
+            self.screen, (78, 205, 196), point,
+            POINT_RADIUS + 16 + pulse // 2, width=5)
+        # Inner white disc
         pygame.draw.circle(self.screen, (255, 255, 255), point, POINT_RADIUS)
-        pygame.draw.circle(self.screen, (255, 80, 80), point, 6)
+        # Center dot — warm orange, points echo the brand primary
+        pygame.draw.circle(self.screen, (255, 140, 66), point, 7)
 
-        # Per-dot label so the user is sure where to click
-        label = self.ui_font.render(f"#{idx}", True, (255, 255, 255))
-        lx = point[0] - label.get_width() // 2
-        ly = point[1] + POINT_RADIUS + 18
-        if ly + label.get_height() > self.sh - 20:
-            ly = point[1] - POINT_RADIUS - 18 - label.get_height()
-        self.screen.blit(label, (lx, ly))
+        # Per-dot number label on a yellow pill next to the target
+        label_text = self.ui_font.render(
+            f"{idx}", True, (74, 56, 16))  # #4A3810 dark brown
+        lw, lh = label_text.get_size()
+        # Place above the target if it would fall off the bottom
+        pill_y = point[1] + POINT_RADIUS + 26
+        if pill_y + lh + 16 > self.sh - 20:
+            pill_y = point[1] - POINT_RADIUS - 26 - lh - 16
+        pill_rect = pygame.Rect(
+            point[0] - lw // 2 - 14, pill_y - 6, lw + 28, lh + 12)
+        pygame.draw.rect(
+            self.screen, (255, 209, 102),  # #FFD166 乳黄
+            pill_rect,
+            border_radius=(lh + 12) // 2,
+        )
+        self.screen.blit(label_text, (point[0] - lw // 2, pill_y))
 
         pygame.display.flip()
 
@@ -809,43 +845,65 @@ class GazeSystem:
         return "down" if dy > 0 else "up"
 
     def _draw_validation_point(self, vp, label, idx, total):
-        """Render one frame of the calibration-validation phase.
+        """Warm kid-friendly calibration-validation screen.
 
-        Mirrors the layout of ``_draw_cali_point``: a centred top banner so
-        the user always sees status text regardless of where the validation
-        target is on screen, plus the target circle and a per-target label.
+        Mirrors the layout of ``_draw_cali_point`` with the same palette
+        but a distinct banner color (mint secondary) so the user perceives
+        "this is a different phase".
         """
-        # Soft dark blue-grey background, matching the calibration screens.
-        self.screen.fill((45, 55, 70))
+        # Same warm dark background as calibration
+        self.screen.fill((55, 45, 40))
 
-        banner_text = f"[{idx}/{total}] 校准验证 — 请注视: {label}"
+        # Banner — mint (#4ECDC4) to distinguish from orange calibration
+        banner_text = f"[{idx}/{total}]  请看: {label}"
         banner = self.ui_font.render(banner_text, True, (255, 255, 255))
         bw, bh = banner.get_size()
         bx = (self.sw - bw) // 2
         by = 60
+        shadow_rect = pygame.Rect(bx - 26, by - 10, bw + 52, bh + 28)
+        pygame.draw.rect(self.screen, (0, 0, 0), shadow_rect.move(0, 4),
+                         border_radius=20)
         pygame.draw.rect(
-            self.screen, (40, 80, 140),
-            pygame.Rect(bx - 24, by - 12, bw + 48, bh + 24),
-            border_radius=12,
+            self.screen, (78, 205, 196),  # #4ECDC4
+            pygame.Rect(bx - 26, by - 12, bw + 52, bh + 28),
+            border_radius=20,
         )
         self.screen.blit(banner, (bx, by))
 
-        sub = self.ui_font.render("无需点击 — 按 ESC 退出", True, (180, 180, 200))
-        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 30))
+        sub = self.ui_font.render(
+            "不用点击，只要看着就好", True, (200, 245, 240))
+        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 26))
 
-        # The target circle (yellow ring + white dot)
-        pygame.draw.circle(self.screen, (255, 200, 50), vp, POINT_RADIUS + 8,
-                           width=4)
-        pygame.draw.circle(self.screen, (255, 255, 255), vp, POINT_RADIUS - 4)
-        pygame.draw.circle(self.screen, (255, 100, 50), vp, 6)
+        # Target ring (warm yellow) + inner orange dot
+        pulse = int(6 * abs(np.sin(time.time() * 2.5)))
+        glow_radius = POINT_RADIUS + 22 + pulse
+        glow_surface = pygame.Surface(
+            (glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(
+            glow_surface, (255, 209, 102, 70),
+            (glow_radius, glow_radius), glow_radius)
+        self.screen.blit(
+            glow_surface, (vp[0] - glow_radius, vp[1] - glow_radius))
+        pygame.draw.circle(
+            self.screen, (255, 209, 102), vp,
+            POINT_RADIUS + 12, width=5)
+        pygame.draw.circle(self.screen, (255, 255, 255), vp, POINT_RADIUS - 2)
+        pygame.draw.circle(self.screen, (255, 140, 66), vp, 7)
 
-        # Big direction label next to the target
-        big = self.ui_font.render(label, True, (255, 220, 80))
-        lx = vp[0] - big.get_width() // 2
-        ly = vp[1] + POINT_RADIUS + 18
-        if ly + big.get_height() > self.sh - 20:
-            ly = vp[1] - POINT_RADIUS - 18 - big.get_height()
-        self.screen.blit(big, (lx, ly))
+        # Big direction label in a rounded orange pill next to the target
+        big = self.ui_font.render(label, True, (255, 255, 255))
+        lw, lh = big.get_size()
+        pill_y = vp[1] + POINT_RADIUS + 26
+        if pill_y + lh + 16 > self.sh - 20:
+            pill_y = vp[1] - POINT_RADIUS - 26 - lh - 16
+        pill_rect = pygame.Rect(
+            vp[0] - lw // 2 - 18, pill_y - 8, lw + 36, lh + 16)
+        pygame.draw.rect(
+            self.screen, (255, 140, 66),
+            pill_rect,
+            border_radius=(lh + 16) // 2,
+        )
+        self.screen.blit(big, (vp[0] - lw // 2, pill_y))
 
         pygame.display.flip()
 

@@ -6,14 +6,9 @@ import '../../models/gaze_frame.dart';
 import '../../models/subject.dart';
 import '../../services/app_state.dart';
 import '../../services/engine_client.dart';
+import '../../theme/app_colors.dart';
 
 /// Training tab — Phase 1 placeholder for the Unity training game.
-///
-/// Shows:
-///   * A subject picker + a "start training" button (creates a `kind=game`
-///     session — Phase 2 doesn't actually launch Unity, just registers).
-///   * A live "gaze cursor" that follows the latest GazeFrame from `WS /gaze`.
-///     Sanity check that the engine ↔ frontend stream works end-to-end.
 class TrainingPage extends StatefulWidget {
   final EngineClient engine;
   final AppState state;
@@ -67,10 +62,12 @@ class _TrainingPageState extends State<TrainingPage> {
         mode: 'game_snake',
       );
       await widget.engine.createGameRun(
-        sessionId: session.id, gameName: 'snake_placeholder',
+        sessionId: session.id,
+        gameName: 'snake_placeholder',
       );
       if (!mounted) return;
-      setState(() => _status = '已注册训练 session ${session.id.substring(0, 8)}…');
+      setState(() =>
+          _status = '训练 session 已注册 · ${session.id.substring(0, 8)}…');
     } catch (e) {
       if (!mounted) return;
       setState(() => _status = '启动失败: $e');
@@ -80,19 +77,85 @@ class _TrainingPageState extends State<TrainingPage> {
   @override
   Widget build(BuildContext context) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(20, 8, 20, 32),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('眼控训练 (Unity 占位)',
-              style: Theme.of(context).textTheme.headlineSmall),
-          const SizedBox(height: 8),
-          const Text(
-            '此页面是 Phase 1 的占位符 — Unity 训练游戏会在 Phase 2/3 接入。'
-            '当前可以验证：(1) 创建一个 kind=game session；(2) 实时 gaze 流可订阅。',
+          // ===== Hero ===========================================================
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(28),
+              gradient: const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [Color(0xFFCCF3F0), Color(0xFFFFF0C2)],
+              ),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 80,
+                  height: 80,
+                  decoration: BoxDecoration(
+                    color: AppColors.secondary,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.secondary.withValues(alpha: 0.28),
+                        blurRadius: 20,
+                        offset: const Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: const Icon(Icons.sports_esports_rounded,
+                      color: Colors.white, size: 42),
+                ),
+                const SizedBox(width: 18),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text('眼控训练游戏',
+                          style:
+                              Theme.of(context).textTheme.headlineMedium),
+                      const SizedBox(height: 4),
+                      Text(
+                        '用眼睛玩游戏，练练专注力',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.tertiaryContainer,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Text(
+                          '🚧 即将推出',
+                          style: Theme.of(context)
+                              .textTheme
+                              .labelMedium
+                              ?.copyWith(
+                                color: AppColors.onTertiaryContainer,
+                                fontWeight: FontWeight.w700,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 24),
 
+          // ===== Subject + start ===============================================
+          Text('选谁来训练？',
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 12),
           ListenableBuilder(
             listenable: widget.state,
             builder: (context, _) {
@@ -101,10 +164,19 @@ class _TrainingPageState extends State<TrainingPage> {
               }
               final subjects = widget.state.subjects;
               if (subjects.isEmpty) {
-                return const Card(
-                  child: ListTile(
-                    leading: Icon(Icons.info_outline),
-                    title: Text('请先在"被试"标签创建一个被试'),
+                return Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceContainer,
+                    borderRadius: BorderRadius.circular(18),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.info_outline,
+                          color: AppColors.onSurfaceMuted),
+                      SizedBox(width: 12),
+                      Expanded(child: Text('请先到"被试"标签添加一位小朋友')),
+                    ],
                   ),
                 );
               }
@@ -112,56 +184,85 @@ class _TrainingPageState extends State<TrainingPage> {
                   !subjects.any((s) => s.id == _selected!.id)) {
                 _selected = null;
               }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  DropdownButtonFormField<Subject>(
-                    initialValue: _selected,
-                    decoration: const InputDecoration(
-                      labelText: '选择被试',
-                      border: OutlineInputBorder(),
+              return Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceContainer,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: AppColors.divider),
+                ),
+                child: DropdownButtonHideUnderline(
+                  child: DropdownButton<Subject>(
+                    isExpanded: true,
+                    value: _selected,
+                    hint: const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 12),
+                      child: Text('请选择'),
                     ),
                     items: subjects
                         .map((s) => DropdownMenuItem(
                               value: s,
-                              child: Text('${s.displayName} (${s.id})'),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                    vertical: 8),
+                                child:
+                                    Text('${s.displayName} (${s.id})'),
+                              ),
                             ))
                         .toList(),
                     onChanged: (v) => setState(() => _selected = v),
                   ),
-                  const SizedBox(height: 16),
-                  FilledButton.icon(
-                    onPressed: _selected == null ? null : _startTraining,
-                    icon: const Icon(Icons.sports_esports),
-                    label: const Text('开始训练 (注册 session)'),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(_status,
-                      style: Theme.of(context).textTheme.bodySmall),
-                ],
+                ),
               );
             },
           ),
-
-          const SizedBox(height: 32),
-
-          // ====== Live gaze indicator =========================================
-          Text('实时 Gaze 流监控',
-              style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            onPressed: _selected == null ? null : _startTraining,
+            icon: const Icon(Icons.play_circle_filled_rounded),
+            label: const Text('开始训练 (占位)'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size.fromHeight(60),
+              backgroundColor: AppColors.secondary,
+              foregroundColor: Colors.white,
+            ),
+          ),
           const SizedBox(height: 8),
+          Center(
+            child: Text(_status,
+                style: Theme.of(context).textTheme.bodySmall),
+          ),
+          const SizedBox(height: 28),
+
+          // ===== Live gaze monitor ============================================
+          Text('实时注视监控',
+              style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 4),
+          Text('早筛运行时能看到小朋友的注视轨迹',
+              style: Theme.of(context).textTheme.bodySmall),
+          const SizedBox(height: 12),
           Container(
-            height: 240,
+            height: 220,
             decoration: BoxDecoration(
-              color: Colors.black87,
-              borderRadius: BorderRadius.circular(8),
+              color: AppColors.onSurface,
+              borderRadius: BorderRadius.circular(22),
             ),
             clipBehavior: Clip.antiAlias,
             child: LayoutBuilder(builder: (context, constraints) {
               final f = _lastFrame;
               if (f == null) {
                 return const Center(
-                  child: Text('等待 gaze 帧… (启动一个 session 会有数据)',
-                      style: TextStyle(color: Colors.white54)),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.visibility_off_outlined,
+                          size: 32, color: Colors.white38),
+                      SizedBox(height: 8),
+                      Text('等待 gaze 数据…',
+                          style: TextStyle(color: Colors.white54)),
+                    ],
+                  ),
                 );
               }
               if (!f.valid) {
@@ -175,51 +276,49 @@ class _TrainingPageState extends State<TrainingPage> {
               return Stack(
                 children: [
                   Positioned(
-                    left: vx - 12,
-                    top: vy - 12,
+                    left: vx - 14,
+                    top: vy - 14,
                     child: Container(
-                      width: 24,
-                      height: 24,
-                      decoration: const BoxDecoration(
-                        color: Colors.greenAccent,
+                      width: 28,
+                      height: 28,
+                      decoration: BoxDecoration(
+                        color: AppColors.tertiary,
                         shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color:
+                                AppColors.tertiary.withValues(alpha: 0.5),
+                            blurRadius: 12,
+                            spreadRadius: 2,
+                          ),
+                        ],
                       ),
                     ),
                   ),
                   Positioned(
-                    left: 8, top: 8,
-                    child: Text(
-                      'x=${f.x.toStringAsFixed(0)}  y=${f.y.toStringAsFixed(0)}\n'
-                      'pupil=${f.pupil.toStringAsFixed(3)}  fps=${f.fps}',
-                      style: const TextStyle(
-                        color: Colors.white70, fontFamily: 'monospace',
-                        fontSize: 11,
+                    left: 12, top: 12,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        'x=${f.x.toStringAsFixed(0)}  y=${f.y.toStringAsFixed(0)}\n'
+                        'pupil=${f.pupil.toStringAsFixed(3)}  ${f.fps} fps',
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontFamily: 'monospace',
+                          fontSize: 11,
+                          height: 1.4,
+                        ),
                       ),
                     ),
                   ),
                 ],
               );
             }),
-          ),
-
-          const SizedBox(height: 24),
-          Card(
-            color: Theme.of(context).colorScheme.surfaceContainerHighest,
-            child: const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Unity 接入约定 (供后续开发参考)',
-                      style: TextStyle(fontWeight: FontWeight.bold)),
-                  SizedBox(height: 8),
-                  Text('• Unity 客户端连接 ws://127.0.0.1:8765/gaze 即可订阅同一根 gaze 流'),
-                  Text('• 9 宫格映射：把屏幕分成 9 块，落在哪格 = 哪个虚拟方向键'),
-                  Text('• 游戏分数通过 PATCH /games/runs/{id} 回写引擎'),
-                  Text('• 详细协议见 engine/docs/ws_protocol.md'),
-                ],
-              ),
-            ),
           ),
         ],
       ),

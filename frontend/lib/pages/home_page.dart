@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../services/app_state.dart';
 import '../services/engine_client.dart';
+import '../theme/app_colors.dart';
 import 'reports/history_page.dart';
 import 'screening/start_page.dart';
 import 'subjects/subjects_list_page.dart';
@@ -19,8 +20,11 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  int _index = 0;
-  String _engineStatus = '检查中…';
+  int _index = 1; // start on the Screening tab — it's the core flow
+  _EngineHealth _health = _EngineHealth.checking;
+  String _engineLabel = '检查中…';
+
+  static const _titles = ['被试管理', '早筛挑战', '眼控训练', '历史报告'];
 
   @override
   void initState() {
@@ -29,15 +33,23 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _pingEngine() async {
+    setState(() {
+      _health = _EngineHealth.checking;
+      _engineLabel = '检查中…';
+    });
     try {
       final h = await widget.engine.health();
       if (!mounted) return;
       setState(() {
-        _engineStatus = '已连接 · ${h['service']} v${h['version']}';
+        _health = _EngineHealth.online;
+        _engineLabel = '${h['service']} v${h['version']}';
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      setState(() => _engineStatus = '未连接 · ${widget.engine.baseUrl}');
+      setState(() {
+        _health = _EngineHealth.offline;
+        _engineLabel = '未连接';
+      });
     }
   }
 
@@ -52,48 +64,165 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('ADHD 早筛与训练系统'),
+        titleSpacing: 20,
+        title: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Icon(Icons.remove_red_eye_rounded,
+                  color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Text(
+                  'ADHD 早筛与训练',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.onSurface,
+                  ),
+                ),
+                Text(
+                  _titles[_index],
+                  style: const TextStyle(
+                    fontSize: 12,
+                    color: AppColors.onSurfaceMuted,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
         actions: [
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.only(right: 16),
             child: Center(
-              child: GestureDetector(
+              child: _EngineStatusChip(
+                health: _health,
+                label: _engineLabel,
                 onTap: _pingEngine,
-                child: Text(
-                  _engineStatus,
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
               ),
             ),
           ),
         ],
       ),
       body: IndexedStack(index: _index, children: pages),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.people_outline),
-            selectedIcon: Icon(Icons.people),
-            label: '被试',
+      bottomNavigationBar: Container(
+        decoration: const BoxDecoration(
+          border: Border(
+            top: BorderSide(color: AppColors.divider, width: 1),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.psychology_outlined),
-            selectedIcon: Icon(Icons.psychology),
-            label: '早筛',
+        ),
+        child: NavigationBar(
+          selectedIndex: _index,
+          onDestinationSelected: (i) => setState(() => _index = i),
+          destinations: const [
+            NavigationDestination(
+              icon: Icon(Icons.child_care_outlined),
+              selectedIcon: Icon(Icons.child_care_rounded),
+              label: '被试',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.rocket_launch_outlined),
+              selectedIcon: Icon(Icons.rocket_launch_rounded),
+              label: '早筛',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.sports_esports_outlined),
+              selectedIcon: Icon(Icons.sports_esports_rounded),
+              label: '训练',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.bar_chart_outlined),
+              selectedIcon: Icon(Icons.bar_chart_rounded),
+              label: '报告',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+enum _EngineHealth { checking, online, offline }
+
+
+class _EngineStatusChip extends StatelessWidget {
+  final _EngineHealth health;
+  final String label;
+  final VoidCallback onTap;
+
+  const _EngineStatusChip({
+    required this.health,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final (bg, fg, dot) = switch (health) {
+      _EngineHealth.online => (
+          AppColors.secondaryContainer,
+          AppColors.onSecondaryContainer,
+          AppColors.secondary,
+        ),
+      _EngineHealth.offline => (
+          AppColors.errorContainer,
+          AppColors.onErrorContainer,
+          AppColors.error,
+        ),
+      _EngineHealth.checking => (
+          AppColors.surfaceContainerHigh,
+          AppColors.onSurfaceMuted,
+          AppColors.onSurfaceMuted,
+        ),
+    };
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(20),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.sports_esports_outlined),
-            selectedIcon: Icon(Icons.sports_esports),
-            label: '训练',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: dot,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: fg,
+                ),
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.assessment_outlined),
-            selectedIcon: Icon(Icons.assessment),
-            label: '报告',
-          ),
-        ],
+        ),
       ),
     );
   }

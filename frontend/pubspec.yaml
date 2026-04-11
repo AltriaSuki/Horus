@@ -33,3 +33,22 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # Bundled Chinese fonts. Flutter Web (CanvasKit) cannot access system
+  # fonts so we ship our own. Previously we used a single variable font
+  # here — but Flutter's variable-font pipeline defaulted to the `Thin`
+  # axis instance for the file, making every character render as a ghostly
+  # hairline that looked like an empty rectangle. Two static OTF weights
+  # (Regular + Bold) side-step the variable-font issue entirely and are
+  # known to render correctly on every Flutter target.
+  #
+  # Source: https://github.com/notofonts/noto-cjk (Adobe / Google,
+  # SIL Open Font License 1.1 — commercial use permitted, license file
+  # bundled next to the assets).
+  fonts:
+    - family: NotoSansSC
+      fonts:
+        - asset: assets/fonts/NotoSansSC-Regular.otf
+          weight: 400
+        - asset: assets/fonts/NotoSansSC-Bold.otf
+          weight: 700

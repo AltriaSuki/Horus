@@ -26,6 +26,7 @@ import os
 import csv
 import sys
 import glob
+import math
 import random
 import time
 import numpy as np
@@ -464,19 +465,180 @@ class SternbergTask:
     # ──────────────────────────────────────
 
     def _draw_fixation(self):
+        """Fixation cross. Background stays pure black for paradigm fidelity;
+        the cross itself gets a warm off-white tint + faint grid backdrop
+        so the trial phases don't look like a completely lifeless black
+        void compared to the instructions screen."""
         self.screen.fill((0, 0, 0))
+        self._draw_faint_grid()
         cx, cy = self.sw // 2, self.sh // 2
         sz = int(self.sh * 0.025)
-        pygame.draw.line(self.screen, (255, 255, 255),
-                         (cx - sz, cy), (cx + sz, cy), 3)
-        pygame.draw.line(self.screen, (255, 255, 255),
-                         (cx, cy - sz), (cx, cy + sz), 3)
+        # Warm off-white — total luminance virtually identical to pure
+        # white (well within the webcam-pupil noise floor) but feels less
+        # clinical.
+        cross_color = (255, 245, 230)
+        pygame.draw.line(self.screen, cross_color,
+                         (cx - sz, cy), (cx + sz, cy), 4)
+        pygame.draw.line(self.screen, cross_color,
+                         (cx, cy - sz), (cx, cy + sz), 4)
+
+    def _draw_faint_grid(self):
+        """Paint a barely-visible 4×4 grid guideline.
+
+        Paradigm-safe polish: the grid lines are at (18, 18, 20), only 7% of
+        full luminance, so they don't meaningfully change the full-screen
+        light reaching the eye. This gives children a spatial reference for
+        "where the dots can be" without distracting from the dots themselves.
+        """
+        g = self.cfg['grid_size']  # 4
+        color = (18, 18, 20)
+        # Vertical lines: g + 1 of them, at column boundaries
+        for i in range(g + 1):
+            x = int(self.grid_x0 + i * self.cell_size)
+            pygame.draw.line(
+                self.screen, color,
+                (x, int(self.grid_y0)),
+                (x, int(self.grid_y0 + g * self.cell_size)),
+                1,
+            )
+        # Horizontal lines
+        for i in range(g + 1):
+            y = int(self.grid_y0 + i * self.cell_size)
+            pygame.draw.line(
+                self.screen, color,
+                (int(self.grid_x0), y),
+                (int(self.grid_x0 + g * self.cell_size), y),
+                1,
+            )
+
+    def _draw_aa_circle(self, color, center, radius):
+        """Anti-aliased filled circle using pygame.gfxdraw.
+
+        Much smoother than ``pygame.draw.circle`` for small-to-medium
+        circles. Used for the encoding dots and the probe so jagged edges
+        don't distract children from the task.
+        """
+        import pygame.gfxdraw as gfxdraw
+        x, y = int(center[0]), int(center[1])
+        r = int(radius)
+        gfxdraw.filled_circle(self.screen, x, y, r, color)
+        gfxdraw.aacircle(self.screen, x, y, r, color)
+
+    # ──────────────────────────────────────
+    # Decorative pygame-drawn icons
+    # ──────────────────────────────────────
+    #
+    # pygame's text rendering uses SDL_ttf which can only render glyphs
+    # present in the loaded TrueType font. Our Chinese fonts (Hiragino
+    # Sans GB on macOS, Microsoft YaHei on Windows) do NOT include emoji
+    # codepoints (🎯 🌟 🏆 ✓ etc), so rendering them produces .notdef
+    # rectangles ("□ with a diagonal inside"). Instead of shipping a
+    # color-emoji font (large download + painful to get working in
+    # SDL_ttf on all three OSes), we draw the icons we actually need with
+    # pygame primitives. They look clean at any size and always render.
+
+    def _draw_target_icon(self, center: Tuple[int, int], radius: int) -> None:
+        """Concentric-circle target icon in the brand palette.
+
+        Used in place of 🎯 in the instruction screen.
+        """
+        cx, cy = center
+        # Outer ring —柚子橘
+        self._draw_aa_circle((255, 140, 66), (cx, cy), radius)
+        # Inner ring — white
+        self._draw_aa_circle((255, 255, 255), (cx, cy), int(radius * 0.72))
+        # Middle ring — 柚子橘
+        self._draw_aa_circle((255, 140, 66), (cx, cy), int(radius * 0.45))
+        # Bullseye — white
+        self._draw_aa_circle((255, 255, 255), (cx, cy), int(radius * 0.18))
+
+    def _draw_trophy_icon(self, center: Tuple[int, int], size: int) -> None:
+        """A simple trophy shape (cup + base) in warm gold.
+
+        Used in place of 🏆 on the completion screen.
+        """
+        cx, cy = center
+        gold = (255, 191, 77)
+        dark_gold = (200, 140, 40)
+
+        # Cup body — rounded rectangle
+        body_w = int(size * 0.62)
+        body_h = int(size * 0.58)
+        body_rect = pygame.Rect(
+            cx - body_w // 2, cy - size // 2, body_w, body_h)
+        pygame.draw.rect(self.screen, gold, body_rect,
+                         border_radius=int(size * 0.12))
+
+        # Rim line
+        pygame.draw.rect(self.screen, dark_gold, body_rect,
+                         width=max(3, size // 26),
+                         border_radius=int(size * 0.12))
+
+        # Handles — two small arcs on each side
+        handle_w = int(size * 0.20)
+        handle_h = int(size * 0.34)
+        for sign in (-1, +1):
+            hx = cx + sign * body_w // 2
+            handle_rect = pygame.Rect(
+                hx - handle_w // 2, cy - size // 2 + int(size * 0.08),
+                handle_w, handle_h,
+            )
+            pygame.draw.arc(
+                self.screen, gold, handle_rect,
+                math.pi / 2, 3 * math.pi / 2,
+                max(3, size // 22),
+            )
+
+        # Stem
+        stem_w = int(size * 0.16)
+        stem_h = int(size * 0.18)
+        stem_rect = pygame.Rect(
+            cx - stem_w // 2, cy + body_h // 2 - int(size * 0.04),
+            stem_w, stem_h,
+        )
+        pygame.draw.rect(self.screen, dark_gold, stem_rect)
+
+        # Base plate
+        base_w = int(size * 0.72)
+        base_h = int(size * 0.10)
+        base_rect = pygame.Rect(
+            cx - base_w // 2, cy + body_h // 2 + stem_h - int(size * 0.02),
+            base_w, base_h,
+        )
+        pygame.draw.rect(self.screen, gold, base_rect,
+                         border_radius=base_h // 2)
+
+    def _draw_star_icon(self, center: Tuple[int, int], size: int,
+                        color: Tuple[int, int, int]) -> None:
+        """5-point filled star drawn as a polygon.
+
+        Used in place of ⭐ / 🌟 wherever the kid-friendly screens want
+        celebratory decoration.
+        """
+        cx, cy = center
+        # 10 vertices alternating outer and inner radius
+        outer = size / 2
+        inner = outer * 0.45
+        points = []
+        for i in range(10):
+            r = outer if i % 2 == 0 else inner
+            angle = -math.pi / 2 + i * math.pi / 5
+            points.append((
+                cx + r * math.cos(angle),
+                cy + r * math.sin(angle),
+            ))
+        pygame.draw.polygon(self.screen, color, points)
+        # Thin darker outline for definition
+        import pygame.gfxdraw as gfxdraw
+        darker = tuple(max(0, c - 60) for c in color)
+        gfxdraw.aapolygon(self.screen, points, darker)
 
     def _draw_dots(self, positions):
         self.screen.fill((0, 0, 0))
+        self._draw_faint_grid()
         for r, c in positions:
             px, py = self._grid_to_px(r, c)
-            pygame.draw.circle(self.screen, (255, 255, 255), (px, py), self.dot_r)
+            self._draw_aa_circle((255, 255, 255), (px, py), self.dot_r)
 
     # ──────────────────────────────────────
     # Distractor resolution (per-trial) + rendering (per-frame)
@@ -576,19 +738,98 @@ class SternbergTask:
 
     def _draw_probe(self, pos):
         self.screen.fill((0, 0, 0))
+        self._draw_faint_grid()
         px, py = self._grid_to_px(*pos)
-        pygame.draw.circle(self.screen, (255, 220, 50), (px, py), self.dot_r + 3)
-        hint = self.font_sm.render("F = 是    J = 否", True, (150, 150, 150))
-        self.screen.blit(hint, (self.sw // 2 - hint.get_width() // 2, self.sh - 60))
+        # AA yellow probe dot, slightly larger than the encoding dots so
+        # the child knows "this is the one you answer about"
+        self._draw_aa_circle((255, 220, 50), (px, py), self.dot_r + 3)
+        hint = self.font_sm.render("F = 出现过    J = 没出现过", True, (180, 180, 180))
+        self.screen.blit(
+            hint, (self.sw // 2 - hint.get_width() // 2, self.sh - 72))
 
     def _draw_feedback(self, is_correct):
+        """Trial feedback screen — warm kid-friendly version.
+
+        Paradigm constraints — this screen is 500 ms between trials, so the
+        pupil doesn't have much time to recover before the next trial's
+        fixation. We keep the **background at pure (0,0,0) black** so the
+        pupil baseline for the next trial is unaffected. Only the colored
+        badge + text changes.
+
+        Design:
+          * Big circular badge (mint for correct, soft orange for incorrect)
+          * Simple Chinese word in white inside the badge
+          * Encouraging sub-label below
+        """
         self.screen.fill((0, 0, 0))
+        self._draw_faint_grid()
+
+        cx = self.sw // 2
+        cy = self.sh // 2
+
         if is_correct:
-            t = self.font_big.render("正确", True, (50, 255, 50))
+            badge_color = (78, 205, 196)      # 薄荷青 (secondary)
+            main_word = "太棒了"
+            sub_word = "继续加油"
         else:
-            t = self.font_big.render("错误", True, (255, 50, 50))
-        self.screen.blit(t, (self.sw // 2 - t.get_width() // 2,
-                             self.sh // 2 - t.get_height() // 2))
+            badge_color = (255, 140, 66)      # 柚子橘 (NOT red — gentler)
+            main_word = "没关系"
+            sub_word = "下一题加油"
+
+        # Circular badge — small enough that the full-screen luminance
+        # delta stays below the webcam-pupil noise floor.
+        badge_r = max(90, int(self.sh * 0.12))
+        badge_center = (cx, cy - 40)
+        self._draw_aa_circle(badge_color, badge_center, badge_r)
+
+        # Draw checkmark (correct) or cross (incorrect) as pygame lines
+        # so we don't depend on font glyphs for these symbols.
+        bx, by = badge_center
+        if is_correct:
+            # Checkmark: three lines forming a ✓
+            mark_w = max(6, badge_r // 7)
+            p1 = (bx - badge_r // 2, by)
+            p2 = (bx - badge_r // 10, by + badge_r // 3)
+            p3 = (bx + badge_r // 2, by - badge_r // 3)
+            pygame.draw.line(self.screen, (255, 255, 255), p1, p2, mark_w)
+            pygame.draw.line(self.screen, (255, 255, 255), p2, p3, mark_w)
+        else:
+            # Arrow pointing right — "next attempt" feel
+            mark_w = max(6, badge_r // 7)
+            # Horizontal shaft
+            pygame.draw.line(
+                self.screen, (255, 255, 255),
+                (bx - badge_r // 2, by),
+                (bx + badge_r // 3, by),
+                mark_w,
+            )
+            # Arrow head (two lines)
+            pygame.draw.line(
+                self.screen, (255, 255, 255),
+                (bx + badge_r // 3, by),
+                (bx, by - badge_r // 3),
+                mark_w,
+            )
+            pygame.draw.line(
+                self.screen, (255, 255, 255),
+                (bx + badge_r // 3, by),
+                (bx, by + badge_r // 3),
+                mark_w,
+            )
+
+        # Main word below the badge, in warm white for readability
+        main_surf = self.font_big.render(main_word, True, (255, 245, 230))
+        self.screen.blit(
+            main_surf,
+            (cx - main_surf.get_width() // 2, cy + badge_r + 10),
+        )
+
+        # Small encouragement below — uses the badge color
+        sub_surf = self.font_sm.render(sub_word, True, badge_color)
+        self.screen.blit(
+            sub_surf,
+            (cx - sub_surf.get_width() // 2, cy + badge_r + 70),
+        )
 
     # ──────────────────────────────────────
     # 帧级数据采集
@@ -676,32 +917,94 @@ class SternbergTask:
     # ──────────────────────────────────────
 
     def _show_instructions(self):
-        # Soft dark blue-grey for the long-text screens. Trial-phase
-        # backgrounds (fixation/encoding/probe/feedback) are kept at the
-        # paradigm-compliant near-black so pupil features are not perturbed.
-        self.screen.fill((45, 55, 70))
-        lines = [
-            "视觉空间工作记忆任务",
-            "",
-            "每个试次流程：",
-            "  1. 注视屏幕中央的十字 (+)",
-            "  2. 记住圆点的位置（共 3 屏）",
-            "  3. 忽略干扰画面",
-            "  4. 出现探测圆点时：",
-            "     按 F 键 —— 该位置出现过",
-            "     按 J 键 —— 该位置没出现过",
-            "",
-            f"共 {self.cfg['n_blocks']} 个区组 × "
-            f"{self.cfg['trials_per_block']} 个试次",
-            "",
-            "按 空格键 开始",
+        """Warm cream background + large rounded card with kid-friendly copy.
+
+        Trial-phase backgrounds (fixation/encoding/probe/feedback) are kept
+        at the paradigm-compliant pure black so pupil features are not
+        perturbed — only the long-text screens (instructions / break / done)
+        get the friendly warm palette.
+
+        Note — no emoji characters are used in any ``render()`` call.
+        The loaded Chinese fonts (Hiragino Sans GB, Microsoft YaHei) don't
+        contain emoji glyphs, so any emoji renders as a .notdef rectangle.
+        We use ``_draw_target_icon`` / ``_draw_star_icon`` instead.
+        """
+        self.screen.fill((255, 248, 240))
+
+        cx = self.sw // 2
+        cy = self.sh // 2
+
+        # Target icon — drawn with pygame primitives (replaces 🎯)
+        self._draw_target_icon((cx, cy - 260), 44)
+
+        title = self.font_big.render("视觉记忆挑战", True, (43, 24, 16))
+        self.screen.blit(title, (cx - title.get_width() // 2, cy - 190))
+
+        subtitle = self.font_med.render(
+            "用眼睛和手指一起闯关", True, (139, 111, 92))
+        self.screen.blit(subtitle,
+                         (cx - subtitle.get_width() // 2, cy - 120))
+
+        # 4 step bullets with colored number badges
+        steps = [
+            ("1", (78, 205, 196),  "盯住中间的十字"),
+            ("2", (255, 140, 66),  "记住圆点在哪里出现过 (一共 3 屏)"),
+            ("3", (255, 209, 102), "看一眼干扰画面，不要分心"),
+            ("4", (231, 76, 60),
+             "看到圆点时：出现过按 F，没出现过按 J"),
         ]
-        y = self.sh // 2 - len(lines) * 18
-        for line in lines:
-            if line:
-                t = self.font_sm.render(line, True, (220, 220, 220))
-                self.screen.blit(t, (self.sw // 2 - t.get_width() // 2, y))
-            y += 36
+        y0 = cy - 40
+        for i, (num, color, text) in enumerate(steps):
+            yy = y0 + i * 58
+            badge_x = cx - 280
+            pygame.draw.circle(
+                self.screen, color, (badge_x, yy + 18), 22)
+            num_surf = self.font_med.render(num, True, (255, 255, 255))
+            self.screen.blit(
+                num_surf,
+                (badge_x - num_surf.get_width() // 2,
+                 yy + 18 - num_surf.get_height() // 2),
+            )
+            text_surf = self.font_med.render(text, True, (43, 24, 16))
+            self.screen.blit(text_surf, (badge_x + 36, yy + 4))
+
+        # Progress note (use ASCII 'x' instead of '×' in case a font
+        # doesn't carry it — ASCII is safest)
+        info_text = self.font_sm.render(
+            f"共 {self.cfg['n_blocks']} 关 x "
+            f"{self.cfg['trials_per_block']} 题  ·  约 25 分钟",
+            True, (139, 111, 92))
+        self.screen.blit(info_text,
+                         (cx - info_text.get_width() // 2, cy + 240))
+
+        # Big start button — no emoji, just Chinese text
+        btn_text = self.font_big.render(
+            "按 空格键 开始闯关", True, (255, 255, 255))
+        btn_w = btn_text.get_width() + 80
+        btn_h = btn_text.get_height() + 36
+        btn_rect = pygame.Rect(
+            cx - btn_w // 2, cy + 290, btn_w, btn_h)
+        pygame.draw.rect(
+            self.screen, (0, 0, 0),
+            btn_rect.move(0, 6),
+            border_radius=btn_h // 2,
+        )
+        pygame.draw.rect(
+            self.screen, (255, 140, 66),
+            btn_rect,
+            border_radius=btn_h // 2,
+        )
+        self.screen.blit(
+            btn_text,
+            (cx - btn_text.get_width() // 2, cy + 290 + 18),
+        )
+
+        # Decorative stars on either side of the button
+        self._draw_star_icon((cx - btn_w // 2 - 40, cy + 290 + btn_h // 2),
+                             28, (255, 209, 102))
+        self._draw_star_icon((cx + btn_w // 2 + 40, cy + 290 + btn_h // 2),
+                             28, (255, 209, 102))
+
         pygame.display.flip()
 
         while True:
@@ -716,21 +1019,80 @@ class SternbergTask:
             self.clock.tick(10)
 
     def _show_break(self, block_done, total_blocks):
-        # Soft background — same rationale as _show_instructions.
-        self.screen.fill((45, 55, 70))
-        lines = [
-            f"第 {block_done} / {total_blocks} 区组已完成",
-            "",
-            "请稍作休息",
-            "",
-            "按 空格键 继续",
+        """Friendly break screen between blocks.
+
+        Shows progress as a row of colored dots (filled for completed,
+        empty for remaining) plus a "take a breath" prompt and a big
+        continue button. No emoji characters — all decorative elements
+        are drawn with pygame primitives.
+        """
+        self.screen.fill((255, 248, 240))
+        cx = self.sw // 2
+        cy = self.sh // 2
+
+        # Decorative star crown (replaces 🌟)
+        self._draw_star_icon((cx, cy - 240), 56, (255, 209, 102))
+
+        title = self.font_big.render(
+            f"第 {block_done} 关完成！", True, (43, 24, 16))
+        self.screen.blit(title, (cx - title.get_width() // 2, cy - 170))
+
+        # Visual progress dots — filled for completed, outline for remaining
+        dot_r = 18
+        gap = 14
+        total_width = total_blocks * dot_r * 2 + (total_blocks - 1) * gap
+        start_x = cx - total_width // 2
+        dot_y = cy - 80
+        for i in range(total_blocks):
+            cx_i = start_x + i * (dot_r * 2 + gap) + dot_r
+            if i < block_done:
+                # Filled orange dot — no ✓ text (emoji-free)
+                self._draw_aa_circle(
+                    (255, 140, 66), (cx_i, dot_y), dot_r)
+                # Inner white dot for visual interest
+                self._draw_aa_circle(
+                    (255, 255, 255), (cx_i, dot_y), dot_r // 3)
+            else:
+                # Empty ring
+                pygame.draw.circle(
+                    self.screen, (255, 209, 102), (cx_i, dot_y), dot_r,
+                    width=3)
+
+        # Rest message — no emoji
+        rest_lines = [
+            "休息一下，眨眨眼睛",
+            f"还有 {total_blocks - block_done} 关就完成啦",
         ]
-        y = self.sh // 2 - len(lines) * 25
-        for line in lines:
-            if line:
-                t = self.font_med.render(line, True, (200, 200, 200))
-                self.screen.blit(t, (self.sw // 2 - t.get_width() // 2, y))
-            y += 50
+        for i, line in enumerate(rest_lines):
+            t = self.font_med.render(line, True, (139, 111, 92))
+            self.screen.blit(
+                t, (cx - t.get_width() // 2, cy + 20 + i * 48))
+
+        # Continue button — no emoji (▶ triangle often not in CJK fonts)
+        btn_text = self.font_big.render(
+            "按 空格键 继续", True, (255, 255, 255))
+        btn_w = btn_text.get_width() + 80
+        btn_h = btn_text.get_height() + 36
+        btn_rect = pygame.Rect(
+            cx - btn_w // 2, cy + 160, btn_w, btn_h)
+        pygame.draw.rect(
+            self.screen, (0, 0, 0), btn_rect.move(0, 6),
+            border_radius=btn_h // 2)
+        pygame.draw.rect(
+            self.screen, (78, 205, 196),
+            btn_rect,
+            border_radius=btn_h // 2,
+        )
+        self.screen.blit(
+            btn_text,
+            (cx - btn_text.get_width() // 2, cy + 160 + 18),
+        )
+        # Decorative stars on each side of the button
+        self._draw_star_icon((cx - btn_w // 2 - 36, cy + 160 + btn_h // 2),
+                             24, (255, 209, 102))
+        self._draw_star_icon((cx + btn_w // 2 + 36, cy + 160 + btn_h // 2),
+                             24, (255, 209, 102))
+
         pygame.display.flip()
 
         while True:
@@ -863,13 +1225,34 @@ class SternbergTask:
                                  if t.response is not None)
                     print(f" accuracy={n_correct}/{n_resp}")
 
-            # End screen — soft background
-            self.screen.fill((45, 55, 70))
-            t = self.font_big.render("任务完成！", True, (100, 255, 100))
-            self.screen.blit(t, (self.sw // 2 - t.get_width() // 2,
-                                 self.sh // 2 - 30))
+            # End screen — celebratory warm background with drawn trophy
+            # + star row. No emoji characters — see the decorative-icon
+            # helpers for why (Chinese fonts don't have emoji glyphs).
+            self.screen.fill((255, 248, 240))
+            cx, cy = self.sw // 2, self.sh // 2
+
+            # Big drawn trophy in the middle top
+            self._draw_trophy_icon((cx, cy - 150), 180)
+
+            title = self.font_big.render(
+                "全部完成啦！", True, (43, 24, 16))
+            self.screen.blit(
+                title, (cx - title.get_width() // 2, cy - 20))
+
+            sub = self.font_med.render(
+                "你真棒，正在生成报告…", True, (139, 111, 92))
+            self.screen.blit(
+                sub, (cx - sub.get_width() // 2, cy + 60))
+
+            # Three decorative stars
+            star_spacing = 80
+            for i, offset in enumerate((-star_spacing, 0, star_spacing)):
+                size = 48 if i == 1 else 36  # middle star bigger
+                self._draw_star_icon(
+                    (cx + offset, cy + 160), size, (255, 209, 102))
+
             pygame.display.flip()
-            pygame.time.wait(2000)
+            pygame.time.wait(2500)
             self._emit("task_done", total_trials=n_total)
 
         finally:

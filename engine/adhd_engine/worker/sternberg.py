@@ -206,39 +206,45 @@ def _check_sequence_constraints(seq: list) -> bool:
 
 
 def get_distractor_stim(dtype: str,
-                        image_pools: dict,
+                        image_cache: dict,
                         pool_indices: dict,
                         target_size: Tuple[int, int],
                         ) -> Tuple[Optional[pygame.Surface], str]:
-    """
-    根据干扰类型获取刺激 Surface 和图片文件名。
+    """Pick the next pre-rendered distractor surface from the cache.
+
+    The cache is built once in :meth:`SternbergTask._preload_distractor_images`
+    so we don't pay disk IO + decode + resize + brightness normalisation cost
+    on every trial. The previous version did all of that per trial which made
+    each trial start with a noticeable hitch on Windows CPU.
 
     Args:
-        dtype: 干扰类型字符串
-        image_pools: {'neutral': [path,...], 'emotional': [path,...]}
-        pool_indices: {'neutral': int, 'emotional': int}  循环索引
-        target_size: 图片统一尺寸 (w, h)
+        dtype: 'neutral_image' | 'emotional_image' | other
+        image_cache: ``{'neutral': [(name, surface), ...], 'emotional': [...]}``
+        pool_indices: cursor dict mutated in place
+        target_size: kept for API compatibility but unused (surfaces are
+            already at the right size)
 
     Returns:
-        (surface_or_None, image_filename)
+        ``(surface, filename)`` or ``(None, "")`` if the cache is empty.
     """
-    if dtype == "neutral_image" and image_pools['neutral']:
-        pool = image_pools['neutral']
-        idx = pool_indices['neutral'] % len(pool)
-        pool_indices['neutral'] = idx + 1
-        path = pool[idx]
-        surf = _load_and_prepare_image(path, target_size)
-        return surf, os.path.basename(path)
+    del target_size  # surfaces in the cache are already prepared
 
-    if dtype == "emotional_image" and image_pools['emotional']:
-        pool = image_pools['emotional']
-        idx = pool_indices['emotional'] % len(pool)
-        pool_indices['emotional'] = idx + 1
-        path = pool[idx]
-        surf = _load_and_prepare_image(path, target_size)
-        return surf, os.path.basename(path)
+    category = None
+    if dtype == "neutral_image":
+        category = "neutral"
+    elif dtype == "emotional_image":
+        category = "emotional"
+    else:
+        return None, ""
 
-    return None, ""
+    pool = image_cache.get(category, [])
+    if not pool:
+        return None, ""
+
+    idx = pool_indices[category] % len(pool)
+    pool_indices[category] = idx + 1
+    name, surf = pool[idx]
+    return surf, name
 
 
 @dataclass
@@ -316,13 +322,42 @@ class SternbergTask:
                 'pingfangsc,microsoftyahei,simhei,simsun,notosanscjksc', 24)
 
         # Load distractor images
+        # Pre-load all distractor images at task init so per-trial latency
+        # is zero. The previous version loaded each image from disk + resized
+        # + normalised brightness on every trial — at 22 MB PNGs this caused
+        # a noticeable hitch on every image-distractor trial.
         self.image_pools = load_images(stimuli_dir)
-        for k in self.image_pools:
-            random.shuffle(self.image_pools[k])
+        self.image_cache: dict = self._preload_distractor_images()
         self.pool_indices = {'neutral': 0, 'emotional': 0}
 
         self.trials: List[TrialData] = []
         self.results: List[TrialData] = []
+
+    def _preload_distractor_images(self) -> dict:
+        """Decode + resize + normalise every distractor image once.
+
+        Returns ``{'neutral': [(filename, Surface), ...], 'emotional': [...]}``,
+        with each list shuffled. Subsequent trial dispatch picks surfaces from
+        these lists with zero disk IO.
+        """
+        cache: dict = {'neutral': [], 'emotional': []}
+        total_loaded = 0
+        t0 = time.perf_counter()
+        for category, paths in self.image_pools.items():
+            for path in paths:
+                try:
+                    surf = _load_and_prepare_image(path, self.dist_img_size)
+                    cache[category].append((os.path.basename(path), surf))
+                    total_loaded += 1
+                except Exception as exc:
+                    print(f"[sternberg] failed to preload {path}: {exc}")
+            random.shuffle(cache[category])
+        elapsed = time.perf_counter() - t0
+        print(f"[sternberg] preloaded {total_loaded} distractor images "
+              f"in {elapsed:.2f}s "
+              f"(neutral={len(cache['neutral'])}, "
+              f"emotional={len(cache['emotional'])})")
+        return cache
 
     def _emit(self, event_type: str, **payload) -> None:
         """Forward a task event to the parent process via the IPC hook."""
@@ -478,7 +513,7 @@ class SternbergTask:
 
         if dtype in ("neutral_image", "emotional_image"):
             surf, img_name = get_distractor_stim(
-                dtype, self.image_pools, self.pool_indices,
+                dtype, self.image_cache, self.pool_indices,
                 self.dist_img_size)
             trial.image_file = img_name
             return {"type": "image", "surface": surf,
@@ -641,7 +676,10 @@ class SternbergTask:
     # ──────────────────────────────────────
 
     def _show_instructions(self):
-        self.screen.fill((0, 0, 0))
+        # Soft dark blue-grey for the long-text screens. Trial-phase
+        # backgrounds (fixation/encoding/probe/feedback) are kept at the
+        # paradigm-compliant near-black so pupil features are not perturbed.
+        self.screen.fill((45, 55, 70))
         lines = [
             "视觉空间工作记忆任务",
             "",
@@ -678,7 +716,8 @@ class SternbergTask:
             self.clock.tick(10)
 
     def _show_break(self, block_done, total_blocks):
-        self.screen.fill((0, 0, 0))
+        # Soft background — same rationale as _show_instructions.
+        self.screen.fill((45, 55, 70))
         lines = [
             f"第 {block_done} / {total_blocks} 区组已完成",
             "",
@@ -824,8 +863,8 @@ class SternbergTask:
                                  if t.response is not None)
                     print(f" accuracy={n_correct}/{n_resp}")
 
-            # End screen
-            self.screen.fill((0, 0, 0))
+            # End screen — soft background
+            self.screen.fill((45, 55, 70))
             t = self.font_big.render("任务完成！", True, (100, 255, 100))
             self.screen.blit(t, (self.sw // 2 - t.get_width() // 2,
                                  self.sh // 2 - 30))

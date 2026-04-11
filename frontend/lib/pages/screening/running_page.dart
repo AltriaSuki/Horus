@@ -28,7 +28,7 @@ class ScreeningRunningPage extends StatefulWidget {
 
 class _ScreeningRunningPageState extends State<ScreeningRunningPage> {
   StreamSubscription<TaskEvent>? _sub;
-  String _phase = '正在启动…';
+  String _phase = '正在启动工作进程…\n(加载模型 + 摄像头 + 预加载图片，约 5-10 秒)';
   int _completedTrials = 0;
   int _totalTrials = 160;
   int _correctCount = 0;

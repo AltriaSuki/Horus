@@ -57,6 +57,12 @@ def test_gaze_system_can_initialise_headless():
     fake_cap.isOpened.return_value = True
     fake_cap.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
     fake_cap.set.return_value = True
+    # cv2 properties — production code reads these for the actual_w/h/fps log
+    fake_cap.get.side_effect = lambda prop: {
+        3: 640.0,   # CAP_PROP_FRAME_WIDTH
+        4: 480.0,   # CAP_PROP_FRAME_HEIGHT
+        5: 30.0,    # CAP_PROP_FPS
+    }.get(prop, 0.0)
 
     with mock.patch("cv2.VideoCapture", return_value=fake_cap):
         from adhd_engine.worker.gaze_system import GazeSystem
@@ -88,6 +94,10 @@ def test_gaze_system_extract_handles_blank_frame():
     fake_cap = mock.MagicMock()
     fake_cap.isOpened.return_value = True
     fake_cap.read.return_value = (True, np.zeros((480, 640, 3), dtype=np.uint8))
+    fake_cap.set.return_value = True
+    fake_cap.get.side_effect = lambda prop: {
+        3: 640.0, 4: 480.0, 5: 30.0,
+    }.get(prop, 0.0)
 
     with mock.patch("cv2.VideoCapture", return_value=fake_cap):
         from adhd_engine.worker.gaze_system import GazeSystem

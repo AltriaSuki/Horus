@@ -453,7 +453,14 @@ class GazeSystem:
         self.session_id = session_id
         self.ipc_publisher = ipc_publisher
         self.video_path = self._resolve_video_path(video_path)
+
+        # Per-stage timing so users can see what's slow during startup.
+        _t0 = time.monotonic()
+
         self.model = ModelAdapter(CHECKPOINT_PATH, MODEL_TYPE)
+        _t_model = time.monotonic()
+        print(f"[gaze_system] model loaded in {_t_model - _t0:.2f}s")
+
         self.mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = self.mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -461,8 +468,18 @@ class GazeSystem:
             min_detection_confidence=0.6,
             min_tracking_confidence=0.6,
         )
+        _t_mp = time.monotonic()
+        print(f"[gaze_system] mediapipe ready in {_t_mp - _t_model:.2f}s")
+
         self.cap = cv2.VideoCapture(CAMERA_ID)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        # Force 640x480 @ 30fps. Default webcam resolution is often 720p+
+        # which makes MediaPipe FaceMesh ~2-3x slower on Windows CPU without
+        # gaining any accuracy for our gaze pipeline (the eye crops we feed
+        # AFFNet are only 112x112 anyway).
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        self.cap.set(cv2.CAP_PROP_FPS, 30)
 
         # Verify the camera actually opened — on macOS this is the place
         # where missing TCC permission shows up. We probe a single read so
@@ -485,6 +502,12 @@ class GazeSystem:
                 "grant access to the terminal app launching this engine, "
                 "then quit and reopen the terminal."
             )
+        _t_cam = time.monotonic()
+        actual_w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = self.cap.get(cv2.CAP_PROP_FPS)
+        print(f"[gaze_system] camera ready in {_t_cam - _t_mp:.2f}s "
+              f"({actual_w}x{actual_h} @ {actual_fps:.0f}fps)")
 
         pygame.init()
         pygame.font.init()
@@ -499,10 +522,16 @@ class GazeSystem:
             display_flags = pygame.FULLSCREEN
         self.screen = pygame.display.set_mode((self.sw, self.sh), display_flags)
         pygame.display.set_caption("研究用眼动追踪器 — ADHD 筛查")
-        # Initial paint so the user sees something immediately and confirms the
-        # window is on the right display.
-        self.screen.fill((25, 25, 25))
+        # Initial paint so the user sees something immediately and confirms
+        # the window is on the right display. Use a soft dark blue-grey
+        # rather than near-black so it doesn't feel jarring on entry.
+        self.screen.fill((45, 55, 70))
         pygame.display.flip()
+        _t_pygame = time.monotonic()
+        print(f"[gaze_system] pygame display ready in "
+              f"{_t_pygame - _t_cam:.2f}s "
+              f"({self.sw}x{self.sh})")
+        print(f"[gaze_system] total init: {_t_pygame - _t0:.2f}s")
 
         # Cross-platform Chinese font (plan §1.6)
         zh_font_path = get_chinese_font_path()
@@ -639,9 +668,10 @@ class GazeSystem:
             print(f"[gaze_system] ipc_publisher raised: {exc}")
 
     def _draw_cali_point(self, point, idx, total, status="请点击圆点"):
-        # Plain 3-tuple fill — the previous (0,0,0,0) tuple was a no-op on
-        # macOS Metal but caused screen flicker on some setups.
-        self.screen.fill((20, 20, 30))
+        # Soft dark blue-grey background — easier on the eyes than the
+        # near-black we used to have here, and clearly distinct from the
+        # pure-black backgrounds the trial phases require.
+        self.screen.fill((45, 55, 70))
 
         # Centered top banner so the user always sees status text regardless
         # of where the calibration dot lives. Banner has its own background
@@ -785,8 +815,8 @@ class GazeSystem:
         the user always sees status text regardless of where the validation
         target is on screen, plus the target circle and a per-target label.
         """
-        # Plain 3-tuple fill — see fix history in `_draw_cali_point`.
-        self.screen.fill((20, 20, 30))
+        # Soft dark blue-grey background, matching the calibration screens.
+        self.screen.fill((45, 55, 70))
 
         banner_text = f"[{idx}/{total}] 校准验证 — 请注视: {label}"
         banner = self.ui_font.render(banner_text, True, (255, 255, 255))
@@ -955,10 +985,8 @@ class GazeSystem:
             if video_frame_surface is not None:
                 self.screen.blit(video_frame_surface, (0, 0))
             else:
-                # Plain 3-tuple — see fix history in `_draw_cali_point`.
-                # The 4-tuple form is a no-op on macOS Metal but causes
-                # screen flicker / blank frames on some setups.
-                self.screen.fill((20, 20, 30))
+                # Soft dark background — same as calibration screens.
+                self.screen.fill((45, 55, 70))
 
             if point is not None:
                 pygame.draw.circle(self.screen, (80, 200, 255), point, 14)

@@ -778,8 +778,52 @@ class GazeSystem:
             return "right" if dx > 0 else "left"
         return "down" if dy > 0 else "up"
 
+    def _draw_validation_point(self, vp, label, idx, total):
+        """Render one frame of the calibration-validation phase.
+
+        Mirrors the layout of ``_draw_cali_point``: a centred top banner so
+        the user always sees status text regardless of where the validation
+        target is on screen, plus the target circle and a per-target label.
+        """
+        # Plain 3-tuple fill — see fix history in `_draw_cali_point`.
+        self.screen.fill((20, 20, 30))
+
+        banner_text = f"[{idx}/{total}] 校准验证 — 请注视: {label}"
+        banner = self.ui_font.render(banner_text, True, (255, 255, 255))
+        bw, bh = banner.get_size()
+        bx = (self.sw - bw) // 2
+        by = 60
+        pygame.draw.rect(
+            self.screen, (40, 80, 140),
+            pygame.Rect(bx - 24, by - 12, bw + 48, bh + 24),
+            border_radius=12,
+        )
+        self.screen.blit(banner, (bx, by))
+
+        sub = self.ui_font.render("无需点击 — 按 ESC 退出", True, (180, 180, 200))
+        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 30))
+
+        # The target circle (yellow ring + white dot)
+        pygame.draw.circle(self.screen, (255, 200, 50), vp, POINT_RADIUS + 8,
+                           width=4)
+        pygame.draw.circle(self.screen, (255, 255, 255), vp, POINT_RADIUS - 4)
+        pygame.draw.circle(self.screen, (255, 100, 50), vp, 6)
+
+        # Big direction label next to the target
+        big = self.ui_font.render(label, True, (255, 220, 80))
+        lx = vp[0] - big.get_width() // 2
+        ly = vp[1] + POINT_RADIUS + 18
+        if ly + big.get_height() > self.sh - 20:
+            ly = vp[1] - POINT_RADIUS - 18 - big.get_height()
+        self.screen.blit(big, (lx, ly))
+
+        pygame.display.flip()
+
     def _validate_calibration(self):
-        """校准后验证阶段：在5个关键方位显示验证点，用户不用操作，只看光标是否大致对准。"""
+        """Post-calibration validation: show 5 cardinal targets for 2 s each
+        and report mean prediction error for diagnostics. The user does not
+        need to click — just look at each target.
+        """
         verify_pts = [
             (int(self.sw * 0.5), int(self.sh * 0.1)),   # up
             (int(self.sw * 0.5), int(self.sh * 0.9)),   # down
@@ -789,15 +833,19 @@ class GazeSystem:
         ]
         labels = ["上", "下", "左", "右", "中"]
         clock = pygame.time.Clock()
-        print("校准验证：请注视每个目标点 2 秒...")
+        total = len(verify_pts)
+        print(f"校准验证：请注视每个目标点 2 秒... ({total} 个点)")
 
-        for vp, label in zip(verify_pts, labels):
+        for idx, (vp, label) in enumerate(zip(verify_pts, labels), start=1):
             t_start = time.time()
-            errors = []
+            errors: list[float] = []
             while time.time() - t_start < 2.0:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         return
+                    if event.type == pygame.KEYDOWN \
+                            and event.key == pygame.K_ESCAPE:
+                        raise KeyboardInterrupt
                 ok, frame = self.cap.read()
                 if not ok:
                     continue
@@ -810,12 +858,7 @@ class GazeSystem:
                     err = np.hypot(mx - vp[0], my - vp[1])
                     errors.append(err)
 
-                self.screen.fill((0, 0, 0, 0))
-                pygame.draw.circle(self.screen, (255, 200, 50), vp, POINT_RADIUS + 6)
-                pygame.draw.circle(self.screen, (255, 255, 255), vp, POINT_RADIUS - 4)
-                text = self.ui_font.render(f"请注视: {label}", True, (255, 255, 100))
-                self.screen.blit(text, (self.sw // 2 - 80, int(self.sh * 0.04)))
-                pygame.display.flip()
+                self._draw_validation_point(vp, label, idx, total)
                 clock.tick(TARGET_FPS)
 
             if errors:
@@ -912,7 +955,10 @@ class GazeSystem:
             if video_frame_surface is not None:
                 self.screen.blit(video_frame_surface, (0, 0))
             else:
-                self.screen.fill((0, 0, 0, 0))
+                # Plain 3-tuple — see fix history in `_draw_cali_point`.
+                # The 4-tuple form is a no-op on macOS Metal but causes
+                # screen flicker / blank frames on some setups.
+                self.screen.fill((20, 20, 30))
 
             if point is not None:
                 pygame.draw.circle(self.screen, (80, 200, 255), point, 14)

@@ -1,0 +1,21 @@
+# Core scientific stack
+numpy
+pandas
+scipy
+joblib
+
+# Machine learning
+scikit-learn
+xgboost
+
+# Deep learning (gaze tracking - AFFNet)
+torch
+torchvision
+
+# Computer vision & face landmarks
+opencv-python
+mediapipe
+Pillow
+
+# UI / experiment runtime
+pygame

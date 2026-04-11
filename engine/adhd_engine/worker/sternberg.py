@@ -443,48 +443,98 @@ class SternbergTask:
             px, py = self._grid_to_px(r, c)
             pygame.draw.circle(self.screen, (255, 255, 255), (px, py), self.dot_r)
 
-    def _draw_distractor(self, trial: TrialData):
-        """Render the distractor phase.
+    # ──────────────────────────────────────
+    # Distractor resolution (per-trial) + rendering (per-frame)
+    # ──────────────────────────────────────
+    #
+    # IMPORTANT — these MUST stay separate. The previous version had a single
+    # ``_draw_distractor`` method that loaded the image / re-randomised the
+    # shape positions inside the per-frame draw callback. Because
+    # ``_present_phase`` calls the draw_fn ~15 times per 500 ms distractor at
+    # 30 fps, that meant:
+    #
+    #   * image distractors flashed 15 different photos in 500 ms (cycling
+    #     through ``pool_indices`` once per frame), instead of one photo for
+    #     500 ms as the Rojas-Líbano paradigm requires
+    #   * shape distractors re-randomised the dot positions every frame,
+    #     producing a flickering kaleidoscope instead of a single static
+    #     dot pattern
+    #   * disk IO + image normalisation ran 15× per trial, causing frame
+    #     drops on top of the visual mess
+    #
+    # The fix: resolve the distractor stimulus ONCE per trial in
+    # ``_resolve_distractor`` and store it in a small dataclass payload. The
+    # ``_render_distractor`` method is then a pure paint operation with zero
+    # side effects, safe to invoke per-frame.
 
-        Plan §1.5.4 — uses :data:`adhd_engine.config.DISTRACTOR_BG_GRAY`
-        instead of pure black so that ``blank``, ``shape``, and
-        ``image`` distractor types have comparable full-screen luminance.
-        Without this fix the per-distractor pupil baseline would differ by
-        ~12× across types — a luminance artefact that pollutes the
-        ``pupil_load_diff`` and ``rt_distractor_slope`` features.
+    def _resolve_distractor(self, trial: TrialData) -> dict:
+        """Resolve a trial's distractor content exactly once.
+
+        Mutates ``trial.image_file`` (image distractors only) and the shared
+        ``self.pool_indices`` cursor. Subsequent per-frame draw calls receive
+        the returned payload as immutable data.
         """
-        self.screen.fill(engine_config.DISTRACTOR_BG_GRAY)
-        cx, cy = self.sw // 2, self.sh // 2
         dtype = trial.distractor_name
 
-        if dtype == "blank":
-            pass
-
-        elif dtype in ("neutral_image", "emotional_image"):
+        if dtype in ("neutral_image", "emotional_image"):
             surf, img_name = get_distractor_stim(
                 dtype, self.image_pools, self.pool_indices,
                 self.dist_img_size)
             trial.image_file = img_name
+            return {"type": "image", "surface": surf,
+                    "fallback_label": dtype}
+
+        if dtype == "shape":
+            # Random dot pattern for the task-related distractor — resolved
+            # ONCE so the user sees a stable pattern for 500 ms instead of
+            # 15 different ones.
+            n_dots = random.randint(4, 8)
+            positions = [
+                (random.randint(0, self.cfg['grid_size'] - 1),
+                 random.randint(0, self.cfg['grid_size'] - 1))
+                for _ in range(n_dots)
+            ]
+            return {"type": "shape", "positions": positions}
+
+        # blank — no payload needed
+        return {"type": "blank"}
+
+    def _render_distractor(self, payload: dict) -> None:
+        """Pure paint of a pre-resolved distractor payload.
+
+        Plan §1.5.4 — fills with :data:`engine_config.DISTRACTOR_BG_GRAY` so
+        the per-distractor full-screen luminance differs by far less than 12×
+        across blank/shape/image types.
+        """
+        self.screen.fill(engine_config.DISTRACTOR_BG_GRAY)
+        cx, cy = self.sw // 2, self.sh // 2
+        ptype = payload.get("type", "blank")
+
+        if ptype == "blank":
+            return
+
+        if ptype == "image":
+            surf = payload.get("surface")
             if surf is not None:
                 iw, ih = surf.get_size()
                 self.screen.blit(surf, (cx - iw // 2, cy - ih // 2))
-            else:
-                w, h = self.dist_img_size
-                color = (120, 120, 120) if dtype == "neutral_image" \
-                    else (180, 50, 50)
-                label = "中性干扰(无图片)" if dtype == "neutral_image" \
-                    else "情绪干扰(无图片)"
-                pygame.draw.rect(self.screen, color,
-                                 (cx - w // 2, cy - h // 2, w, h))
-                t = self.font_sm.render(label, True, (220, 220, 220))
-                self.screen.blit(t, (cx - t.get_width() // 2,
-                                     cy - t.get_height() // 2))
+                return
+            # Fallback rendering when the image library is empty
+            w, h = self.dist_img_size
+            label_kind = payload.get("fallback_label", "neutral_image")
+            color = (120, 120, 120) if label_kind == "neutral_image" \
+                else (180, 50, 50)
+            label = "中性干扰(无图片)" if label_kind == "neutral_image" \
+                else "情绪干扰(无图片)"
+            pygame.draw.rect(self.screen, color,
+                             (cx - w // 2, cy - h // 2, w, h))
+            t = self.font_sm.render(label, True, (220, 220, 220))
+            self.screen.blit(t, (cx - t.get_width() // 2,
+                                 cy - t.get_height() // 2))
+            return
 
-        elif dtype == "shape":
-            # 任务相关干扰：网格上随机散布圆点
-            for _ in range(random.randint(4, 8)):
-                rr = random.randint(0, self.cfg['grid_size'] - 1)
-                cc = random.randint(0, self.cfg['grid_size'] - 1)
+        if ptype == "shape":
+            for rr, cc in payload.get("positions", []):
                 px, py = self._grid_to_px(rr, cc)
                 pygame.draw.circle(self.screen, (100, 100, 100),
                                    (px, py), self.dot_r)
@@ -660,26 +710,38 @@ class SternbergTask:
     # ──────────────────────────────────────
 
     def run_trial(self, trial: TrialData):
-        """执行单个 trial 的完整序列。"""
+        """Run a single trial end-to-end.
+
+        Trial structure (Wainstein 2017 / Rojas-Líbano 2019):
+
+            Fix(500) → Enc1(750) → Fix(500) → Enc2(750) → Fix(500) →
+            Enc3(750) → MaintenanceFix(500) → Distractor(500) → Probe(1500)
+
+        The 500 ms maintenance fixation between the last encoding array and
+        the distractor was added after re-reading the parent paper (see
+        Wainstein 2017 Methods, "this same interval preceded the distractor").
+        Without it the working-memory hold period was missing entirely.
+        """
         cfg = self.cfg
 
-        # 1. Fixation (500ms)
+        # 1. Fixation
         self._present_phase(self._draw_fixation, cfg['fixation_ms'], trial)
 
-        # 2. Encoding: 3 arrays, 750ms each, 500ms fixation gap
-        for arr_idx, arr in enumerate(trial.dot_positions):
+        # 2. Encoding: 3 arrays, each followed by an inter-array fixation
+        for arr in trial.dot_positions:
             self._present_phase(lambda a=arr: self._draw_dots(a),
                                 cfg['encoding_ms'], trial)
-            if arr_idx < 2:
-                self._present_phase(self._draw_fixation,
-                                    cfg['encoding_gap_ms'], trial)
+            self._present_phase(self._draw_fixation,
+                                cfg['encoding_gap_ms'], trial)
 
-        # 3. Distractor (500ms)
+        # 3. Distractor — RESOLVE ONCE before the per-frame loop so we get
+        #    one image / one shape pattern, not 15 of them.
+        distractor_payload = self._resolve_distractor(trial)
         self._present_phase(
-            lambda: self._draw_distractor(trial),
+            lambda: self._render_distractor(distractor_payload),
             cfg['distractor_ms'], trial)
 
-        # 4. Probe (1500ms, 检测按键)
+        # 4. Probe (also collects F/J response)
         response, rt = self._present_phase(
             lambda: self._draw_probe(trial.probe_pos),
             cfg['probe_ms'], trial, check_keys=True)
@@ -688,10 +750,14 @@ class SternbergTask:
         trial.reaction_time = rt
         trial.correct = 1 if response == trial.correct_answer else 0
 
-        # 5. Feedback (500ms)
-        self._present_phase(
-            lambda: self._draw_feedback(trial.correct == 1),
-            cfg['feedback_ms'])
+        # 5. Feedback — kept short and configurable. Default value left at
+        #    500 ms for now; can be set to 0 in TASK_CONFIG to mirror the
+        #    original paradigm exactly (the original paper does not include
+        #    trial-level feedback).
+        if cfg.get('feedback_ms', 0) > 0:
+            self._present_phase(
+                lambda: self._draw_feedback(trial.correct == 1),
+                cfg['feedback_ms'])
 
     # ──────────────────────────────────────
     # 完整实验执行

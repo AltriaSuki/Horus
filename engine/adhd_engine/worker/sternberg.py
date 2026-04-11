@@ -28,6 +28,7 @@ import sys
 import glob
 import math
 import random
+import threading
 import time
 import numpy as np
 import pygame
@@ -271,6 +272,82 @@ class TrialData:
     gaze_y_series: list = field(default_factory=list)
 
 
+class _CaptureWorker(threading.Thread):
+    """Background capture + inference loop.
+
+    Without this, ``_present_phase`` blocked every frame on
+    ``cap.read()`` + ``FaceMesh.process`` + ``AFFNet.forward``, which adds
+    up to 50-80 ms per frame on Windows CPU. That:
+
+    1. Made the pygame draw loop run slower than 30 fps — phases ran long
+       and felt choppy ("卡卡的").
+    2. Pushed each visual flip behind the blocking capture, so when a user
+       pressed SPACE to advance from the instructions screen the new trial
+       phase didn't appear for 50-80 ms — the user perceived the old
+       screen "overlapping" with the new task.
+
+    Moving capture onto a daemon thread decouples rendering from inference.
+    The main thread (30 fps) just reads the **latest** captured frame from a
+    lock-protected slot — non-blocking. The capture thread runs as fast as
+    the camera + model allow, independently of the paradigm's 30 fps clock.
+
+    Thread-safety — OpenCV, MediaPipe, and PyTorch all release the GIL
+    during their heavy C++/CUDA code, so this actually parallelises on
+    CPython despite the GIL.
+    """
+
+    def __init__(self, gaze_system):
+        super().__init__(name="adhd-capture-worker", daemon=True)
+        self._gs = gaze_system
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._latest: Tuple[float, float, float] = (
+            float("nan"), float("nan"), float("nan"),
+        )
+
+    def run(self) -> None:
+        """Tight capture loop — camera + features + gaze prediction."""
+        gs = self._gs
+        while not self._stop.is_set():
+            try:
+                ok, frame = gs.cap.read()
+            except Exception:
+                time.sleep(0.01)
+                continue
+            if not ok:
+                time.sleep(0.01)
+                continue
+
+            ff = gs._extract(frame)
+            if ff is None:
+                with self._lock:
+                    self._latest = (float("nan"), float("nan"),
+                                    float("nan"))
+                continue
+
+            gs.feat_buf.append(ff.feat)
+            pupil = ff.pupil_proxy
+
+            gx, gy = float("nan"), float("nan")
+            if len(gs.feat_buf) >= 3:
+                feat = gs._weighted_mean_feat()
+                mx, my = gs._predict_screen_point(feat)
+                sx, sy = gs.smoother.update(float(mx), float(my))
+                gx = float(np.clip(sx, 0, gs.sw - 1))
+                gy = float(np.clip(sy, 0, gs.sh - 1))
+
+            with self._lock:
+                self._latest = (gx, gy, pupil)
+
+    def latest(self) -> Tuple[float, float, float]:
+        """Non-blocking read of the most recent captured sample."""
+        with self._lock:
+            return self._latest
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 class SternbergTask:
     """Sternberg visual-spatial working memory task.
 
@@ -333,6 +410,11 @@ class SternbergTask:
 
         self.trials: List[TrialData] = []
         self.results: List[TrialData] = []
+
+        # Background capture worker — started at the beginning of `run()`
+        # and stopped in the finally clause so camera/inference runs in
+        # parallel with the 30 fps draw loop.
+        self._capture_worker: Optional[_CaptureWorker] = None
 
     def _preload_distractor_images(self) -> dict:
         """Decode + resize + normalise every distractor image once.
@@ -836,11 +918,20 @@ class SternbergTask:
     # ──────────────────────────────────────
 
     def _capture_one_frame(self):
+        """Return the latest (gaze_x, gaze_y, pupil_proxy) sample.
+
+        While a ``_CaptureWorker`` is running (during ``run()``), this is a
+        non-blocking read from the worker's shared slot. Otherwise (e.g.
+        during a standalone test) it falls back to a synchronous
+        camera+inference call — slower but keeps the API compatible.
         """
-        采集一帧摄像头，返回 (gaze_x, gaze_y, pupil_proxy)。
-        利用 GazeSystem 已校准的回归器预测注视点，
-        利用 FrameFeature.pupil_proxy 获取瞳孔估计。
-        """
+        worker = self._capture_worker
+        if worker is not None and worker.is_alive():
+            return worker.latest()
+
+        # Synchronous fallback — same code path the single-threaded
+        # version used. Keeps tests that construct a SternbergTask without
+        # calling run() working.
         ok, frame = self.gs.cap.read()
         if not ok:
             return np.nan, np.nan, np.nan
@@ -852,7 +943,6 @@ class SternbergTask:
         self.gs.feat_buf.append(ff.feat)
         pupil = ff.pupil_proxy
 
-        # 注视预测
         gx, gy = np.nan, np.nan
         if len(self.gs.feat_buf) >= 3:
             feat = self.gs._weighted_mean_feat()
@@ -864,17 +954,29 @@ class SternbergTask:
         return gx, gy, pupil
 
     def _present_phase(self, draw_fn, duration_ms, trial=None, check_keys=False):
-        """
-        呈现一个刺激阶段，同时持续采集眼动数据。
+        """Show a stimulus phase for ``duration_ms`` while recording gaze.
 
-        Args:
-            draw_fn: 绘制刺激的函数
-            duration_ms: 持续时间 (ms)
-            trial: TrialData 实例，若非 None 则记录注视/瞳孔数据
-            check_keys: 若 True 则检测 F/J 按键响应
+        Loop ordering (critical for smooth transitions):
 
-        Returns:
-            (response_key, reaction_time) if check_keys else (None, None)
+            events → **draw → flip → capture → sleep**
+
+        The previous version did ``capture → draw → flip``, which blocked
+        every iteration on ~50 ms of camera + MediaPipe + AFFNet before
+        updating the screen. That produced two visible bugs:
+
+        1. When SPACE advanced past the instructions screen, the first
+           trial's fixation didn't appear for ~50 ms because the loop's
+           first step was a blocking capture, not a draw. Users saw the
+           cream instructions "overlapping" with the start of the trial.
+
+        2. Phase durations ran long because each iteration exceeded the
+           33 ms frame budget, so the loop completed its ``n_frames``
+           iterations slower than the paradigm's 500 ms / 750 ms targets.
+
+        Now we draw + flip first (instant visual update) and then read the
+        latest gaze sample from the background ``_CaptureWorker`` — which
+        is non-blocking, so each iteration fits comfortably in the 33 ms
+        budget.
         """
         fps = self.cfg['target_fps']
         n_frames = max(1, int(duration_ms * fps / 1000))
@@ -883,7 +985,7 @@ class SternbergTask:
         t_start = time.perf_counter()
 
         for _ in range(n_frames):
-            # 事件处理
+            # 1. Event handling (non-blocking)
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     raise KeyboardInterrupt
@@ -898,16 +1000,20 @@ class SternbergTask:
                             response = 'j'
                             rt = time.perf_counter() - t_start
 
-            # 眼动数据采集
+            # 2. Draw + flip FIRST — screen updates immediately, no
+            #    perceived lag at phase transitions.
+            draw_fn()
+            pygame.display.flip()
+
+            # 3. Gaze sample (non-blocking — from background worker).
             gx, gy, pupil = self._capture_one_frame()
             if trial is not None:
                 trial.gaze_x_series.append(gx)
                 trial.gaze_y_series.append(gy)
                 trial.pupil_series.append(pupil)
 
-            # 绘制
-            draw_fn()
-            pygame.display.flip()
+            # 4. Maintain the 30 fps clock. If the loop body ran fast
+            #    (which it now does, no blocking inference), tick sleeps.
             self.clock.tick(fps)
 
         return response, rt
@@ -1194,6 +1300,12 @@ class SternbergTask:
         # Make the window fully opaque during the task (Win32 only)
         self._set_window_opaque(True)
 
+        # Start the background capture worker so the main draw loop
+        # never blocks on camera / MediaPipe / AFFNet. This is the fix
+        # for the "stuttering at phase transitions" issue.
+        self._capture_worker = _CaptureWorker(self.gs)
+        self._capture_worker.start()
+
         try:
             self._show_instructions()
 
@@ -1256,6 +1368,11 @@ class SternbergTask:
             self._emit("task_done", total_trials=n_total)
 
         finally:
+            # Stop the background capture worker cleanly
+            if self._capture_worker is not None:
+                self._capture_worker.stop()
+                self._capture_worker.join(timeout=2.0)
+                self._capture_worker = None
             self._set_window_opaque(False)
 
         # 行为汇总

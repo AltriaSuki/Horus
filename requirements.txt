@@ -14,7 +14,9 @@ torchvision
 
 # Computer vision & face landmarks
 opencv-python
-mediapipe
+# Pin to <0.10.20 — newer versions remove the legacy `mp.solutions` namespace
+# on macOS arm64. See engine/pyproject.toml for details.
+mediapipe>=0.10,<0.10.20
 Pillow
 
 # UI / experiment runtime

@@ -24,7 +24,11 @@ dependencies = [
     "torch",
     "torchvision",
     "opencv-python",
-    "mediapipe",
+    # IMPORTANT: pin to <0.10.20 — newer mediapipe (≥0.10.20) on macOS arm64
+    # ships only the new tasks API and removes the legacy `mp.solutions`
+    # namespace that gaze_system.py + the upstream itracker.py rely on.
+    # 0.10.14 is the last version we verified works with `mp.solutions.face_mesh`.
+    "mediapipe>=0.10,<0.10.20",
     "pygame",
     "Pillow",
     "matplotlib",          # used for cross-platform font lookup

@@ -68,3 +68,32 @@ def get_subject(subject_id: str):
         id=sub.id, display_name=sub.display_name, birth_date=sub.birth_date,
         sex=sub.sex, notes=sub.notes,
     )
+
+
+class SessionSummary(BaseModel):
+    id: str
+    subject_id: str
+    kind: str
+    mode: str
+    status: str
+    started_at: str
+    ended_at: Optional[str] = None
+    has_report: bool = False
+
+
+@router.get("/{subject_id}/sessions", response_model=List[SessionSummary])
+def list_subject_sessions(subject_id: str):
+    if repo.get_subject(subject_id) is None:
+        raise HTTPException(404, f"subject {subject_id} not found")
+    sessions = repo.list_sessions_for_subject(subject_id)
+    out: List[SessionSummary] = []
+    for s in sessions:
+        report_exists = repo.get_report(s.id) is not None
+        out.append(SessionSummary(
+            id=s.id, subject_id=s.subject_id, kind=s.kind, mode=s.mode,
+            status=s.status,
+            started_at=s.started_at.isoformat() if s.started_at else "",
+            ended_at=s.ended_at.isoformat() if s.ended_at else None,
+            has_report=report_exists,
+        ))
+    return out

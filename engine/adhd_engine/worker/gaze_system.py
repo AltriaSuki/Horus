@@ -464,20 +464,53 @@ class GazeSystem:
         self.cap = cv2.VideoCapture(CAMERA_ID)
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
+        # Verify the camera actually opened — on macOS this is the place
+        # where missing TCC permission shows up. We probe a single read so
+        # the worker can fail fast with a clear message instead of silently
+        # losing every calibration sample to a black-feed loop.
+        if not self.cap.isOpened():
+            raise RuntimeError(
+                "camera_unavailable: cv2.VideoCapture(0) could not open the "
+                "default camera. On macOS this usually means the launching "
+                "Terminal app does not have camera permission. Open System "
+                "Settings → Privacy & Security → Camera and enable Terminal "
+                "(or your terminal app), then quit and reopen Terminal."
+            )
+        ok, _probe = self.cap.read()
+        if not ok:
+            self.cap.release()
+            raise RuntimeError(
+                "camera_unavailable: cv2.VideoCapture.read() returned False. "
+                "Check System Settings → Privacy & Security → Camera and "
+                "grant access to the terminal app launching this engine, "
+                "then quit and reopen the terminal."
+            )
+
         pygame.init()
         pygame.font.init()
         info = pygame.display.Info()
         self.sw, self.sh = info.current_w, info.current_h
-        self.screen = pygame.display.set_mode((self.sw, self.sh), pygame.NOFRAME)
+        # Use a regular fullscreen mode (not NOFRAME) on macOS so the window
+        # actually grabs focus and gets composited. NOFRAME borderless windows
+        # behave erratically with macOS Mission Control / Metal compositor.
+        if _IS_WIN32:
+            display_flags = pygame.NOFRAME
+        else:
+            display_flags = pygame.FULLSCREEN
+        self.screen = pygame.display.set_mode((self.sw, self.sh), display_flags)
         pygame.display.set_caption("研究用眼动追踪器 — ADHD 筛查")
+        # Initial paint so the user sees something immediately and confirms the
+        # window is on the right display.
+        self.screen.fill((25, 25, 25))
+        pygame.display.flip()
 
         # Cross-platform Chinese font (plan §1.6)
         zh_font_path = get_chinese_font_path()
         if zh_font_path is not None:
-            self.ui_font = pygame.font.Font(zh_font_path, 24)
+            self.ui_font = pygame.font.Font(zh_font_path, 32)
         else:
             self.ui_font = pygame.font.SysFont(
-                "pingfangsc,microsoftyahei,simhei,simsun,notosanscjksc", 24
+                "pingfangsc,microsoftyahei,simhei,simsun,notosanscjksc", 32
             )
 
         # Windows-only window-layering tricks — keep them only on win32
@@ -606,19 +639,46 @@ class GazeSystem:
             print(f"[gaze_system] ipc_publisher raised: {exc}")
 
     def _draw_cali_point(self, point, idx, total, status="请点击圆点"):
-        self.screen.fill((0, 0, 0, 0))
-        # 外圈脉冲动画
-        pulse = int(4 * abs(np.sin(time.time() * 3)))
-        pygame.draw.circle(self.screen, (40, 120, 200), point, POINT_RADIUS + 10 + pulse)
+        # Plain 3-tuple fill — the previous (0,0,0,0) tuple was a no-op on
+        # macOS Metal but caused screen flicker on some setups.
+        self.screen.fill((20, 20, 30))
+
+        # Centered top banner so the user always sees status text regardless
+        # of where the calibration dot lives. Banner has its own background
+        # so the text is never lost on a busy display.
+        banner = self.ui_font.render(
+            f"[{idx}/{total}] {status}", True, (255, 255, 255))
+        bw, bh = banner.get_size()
+        bx = (self.sw - bw) // 2
+        by = 60
+        pygame.draw.rect(
+            self.screen, (40, 80, 140),
+            pygame.Rect(bx - 24, by - 12, bw + 48, bh + 24),
+            border_radius=12,
+        )
+        self.screen.blit(banner, (bx, by))
+
+        # Sub-banner: instruction
+        sub = self.ui_font.render(
+            "按 ESC 退出", True, (180, 180, 200))
+        self.screen.blit(sub, ((self.sw - sub.get_width()) // 2, by + bh + 30))
+
+        # Pulsing target dot
+        pulse = int(6 * abs(np.sin(time.time() * 3)))
+        pygame.draw.circle(
+            self.screen, (40, 120, 200), point,
+            POINT_RADIUS + 14 + pulse, width=4)
         pygame.draw.circle(self.screen, (255, 255, 255), point, POINT_RADIUS)
-        pygame.draw.circle(self.screen, (255, 80, 80), point, 5)
-        # 状态文字
-        text = self.ui_font.render(f"[{idx}/{total}] {status}", True, (220, 220, 220))
-        tx = max(10, min(point[0] - text.get_width() // 2, self.sw - text.get_width() - 10))
-        ty = point[1] + POINT_RADIUS + 25
-        if ty + text.get_height() > self.sh - 10:
-            ty = point[1] - POINT_RADIUS - 35
-        self.screen.blit(text, (tx, ty))
+        pygame.draw.circle(self.screen, (255, 80, 80), point, 6)
+
+        # Per-dot label so the user is sure where to click
+        label = self.ui_font.render(f"#{idx}", True, (255, 255, 255))
+        lx = point[0] - label.get_width() // 2
+        ly = point[1] + POINT_RADIUS + 18
+        if ly + label.get_height() > self.sh - 20:
+            ly = point[1] - POINT_RADIUS - 18 - label.get_height()
+        self.screen.blit(label, (lx, ly))
+
         pygame.display.flip()
 
     def calibrate(self):
@@ -627,30 +687,51 @@ class GazeSystem:
         clock = pygame.time.Clock()
 
         for idx, point in enumerate(self.calibration_points, start=1):
-            # 等待用户点击该校准点
+            # Wait for the user to click on the highlighted dot
             clicked = False
             while not clicked:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         raise KeyboardInterrupt
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        raise KeyboardInterrupt
                     if event.type == pygame.MOUSEBUTTONDOWN:
                         mx, my = pygame.mouse.get_pos()
                         if np.hypot(mx - point[0], my - point[1]) <= POINT_RADIUS + 15:
                             clicked = True
-                self._draw_cali_point(point, idx, len(self.calibration_points), "请点击圆点")
+                self._draw_cali_point(point, idx, len(self.calibration_points),
+                                      "请点击圆点")
                 clock.tick(TARGET_FPS)
 
-            # 点击后采集样本
+            # Sample camera frames after the click
             valid_feats = []
+            failed_reads = 0
             t_start = time.time()
-            while len(valid_feats) < CALI_SAMPLES_PER_POINT and (time.time() - t_start) < 3.0:
+            while (len(valid_feats) < CALI_SAMPLES_PER_POINT
+                   and (time.time() - t_start) < 3.0):
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
+                        raise KeyboardInterrupt
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         raise KeyboardInterrupt
 
                 ok, frame = self.cap.read()
                 if not ok:
+                    failed_reads += 1
+                    # If the camera silently fails for 30 consecutive frames
+                    # bail out — better than dragging the user through 13
+                    # impossible-to-pass calibration points.
+                    if failed_reads > 30:
+                        raise RuntimeError(
+                            "camera_unavailable: cv2.VideoCapture.read() "
+                            "returned False repeatedly during calibration. "
+                            "The camera was opened but is no longer "
+                            "delivering frames. Quit and re-grant camera "
+                            "permission in System Settings → Privacy & "
+                            "Security → Camera."
+                        )
                     continue
+
                 ff = self._extract(frame)
                 if ff is not None and ff.quality > 0.1:
                     valid_feats.append(ff.feat)

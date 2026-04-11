@@ -1,0 +1,35 @@
+name: adhd_shell
+description: Cross-platform front-end shell for the ADHD screening + training engine.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # HTTP REST client (calls into the FastAPI engine)
+  http: ^1.2.2
+
+  # WebSocket client — works on desktop, mobile and web
+  web_socket_channel: ^3.0.1
+
+  # Charting (radar / timeline plots in the report page)
+  fl_chart: ^0.69.2
+
+  # Date / number formatting
+  intl: ^0.19.0
+
+  # Material icons & fonts
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

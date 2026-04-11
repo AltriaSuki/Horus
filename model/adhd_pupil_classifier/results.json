@@ -1,0 +1,267 @@
+{
+  "version": "v2_enhanced",
+  "timestamp": "2026-04-09 21:53:16",
+  "n_subjects": 50,
+  "n_adhd": 28,
+  "n_ctrl": 22,
+  "n_features": 27,
+  "feature_names": [
+    "mean_rt",
+    "std_rt",
+    "cv_rt",
+    "rt_skewness",
+    "accuracy",
+    "omission_rate",
+    "rt_diff_correct_incorrect",
+    "pupil_max_peak",
+    "pupil_mean_change",
+    "pupil_std_of_means",
+    "pupil_overall_var",
+    "pupil_peak_latency",
+    "pupil_slope",
+    "pupil_auc",
+    "pupil_late_minus_early",
+    "pupil_slope_var",
+    "pupil_load_diff",
+    "pupil_peak_load_diff",
+    "gaze_var_x",
+    "gaze_var_y",
+    "gaze_path_normalized",
+    "mean_rt_load1",
+    "mean_rt_load2",
+    "rt_load_diff",
+    "acc_load_diff",
+    "rt_distractor_slope",
+    "acc_distractor_slope"
+  ],
+  "models": {
+    "Random Forest": {
+      "accuracy": 0.8,
+      "precision": 0.8461538461538461,
+      "recall": 0.7857142857142857,
+      "f1": 0.8148148148148148,
+      "confusion_matrix": [
+        [
+          18,
+          4
+        ],
+        [
+          6,
+          22
+        ]
+      ],
+      "feature_importance": {
+        "cv_rt": 0.17205238710892845,
+        "accuracy": 0.14090245675554336,
+        "pupil_std_of_means": 0.1378455379475567,
+        "std_rt": 0.11880793222993397,
+        "pupil_auc": 0.08033400048479812,
+        "pupil_mean_change": 0.07878479124575268,
+        "gaze_var_x": 0.06512323399984346,
+        "mean_rt_load1": 0.04570579164673462,
+        "rt_diff_correct_incorrect": 0.04130886059693923,
+        "mean_rt": 0.039450203067673204
+      }
+    },
+    "XGBoost": {
+      "accuracy": 0.78,
+      "precision": 0.8148148148148148,
+      "recall": 0.7857142857142857,
+      "f1": 0.8,
+      "confusion_matrix": [
+        [
+          17,
+          5
+        ],
+        [
+          6,
+          22
+        ]
+      ],
+      "feature_importance": {
+        "cv_rt": 0.18324751377105714,
+        "accuracy": 0.15773339326726274,
+        "pupil_std_of_means": 0.1285698878765106,
+        "std_rt": 0.08467249125242234,
+        "pupil_mean_change": 0.07784136548638344,
+        "pupil_auc": 0.07530684351921081,
+        "mean_rt_load1": 0.06170689486665651,
+        "gaze_var_x": 0.059815216213464736,
+        "mean_rt_load2": 0.048349813721142706,
+        "mean_rt": 0.0450802642852068
+      }
+    },
+    "SVM-RBF": {
+      "accuracy": 0.66,
+      "precision": 0.7391304347826086,
+      "recall": 0.6071428571428571,
+      "f1": 0.6666666666666666,
+      "confusion_matrix": [
+        [
+          16,
+          6
+        ],
+        [
+          11,
+          17
+        ]
+      ],
+      "feature_importance": {}
+    },
+    "Soft Voting Ensemble": {
+      "accuracy": 0.78,
+      "precision": 0.8148148148148148,
+      "recall": 0.7857142857142857,
+      "f1": 0.8,
+      "confusion_matrix": [
+        [
+          17,
+          5
+        ],
+        [
+          6,
+          22
+        ]
+      ],
+      "feature_importance": {}
+    }
+  },
+  "clinical_correlations": {
+    "prob_vs_Information": {
+      "r": -0.03574447634974996,
+      "p": 0.8073625412358504
+    },
+    "prob_vs_Similarities": {
+      "r": 0.13801159205787517,
+      "p": 0.3443132102847128
+    },
+    "prob_vs_Arithmetic": {
+      "r": -0.390081873930422,
+      "p": 0.005592176638532306
+    },
+    "prob_vs_Vocabulary": {
+      "r": -0.1179394685276957,
+      "p": 0.41961676782669327
+    },
+    "prob_vs_Comprehension": {
+      "r": -0.06048966974271769,
+      "p": 0.6796980285759833
+    },
+    "prob_vs_Digit_span": {
+      "r": -0.32815214458976455,
+      "p": 0.021339960783721496
+    },
+    "prob_vs_Verbal_score": {
+      "r": -0.23991344014825086,
+      "p": 0.09331893632630411
+    },
+    "prob_vs_Verbal_IQ": {
+      "r": -0.14043495101126888,
+      "p": 0.33582469339023485
+    },
+    "prob_vs_Performance_score": {
+      "r": -0.31165344190321265,
+      "p": 0.027582342454512743
+    },
+    "prob_vs_Performance_IQ": {
+      "r": -0.250751030729319,
+      "p": 0.08224099657368804
+    },
+    "pupil_std_of_means_vs_Verbal_IQ": {
+      "r": -0.06412692071450003,
+      "p": 0.6615665630966949
+    },
+    "pupil_std_of_means_vs_Performance_IQ": {
+      "r": -0.12512441719766024,
+      "p": 0.3916473077263223
+    },
+    "pupil_std_of_means_vs_Digit_span": {
+      "r": 0.12788288005984808,
+      "p": 0.38120725866407074
+    },
+    "pupil_slope_vs_Verbal_IQ": {
+      "r": 0.06085790547335645,
+      "p": 0.6778540062445976
+    },
+    "pupil_slope_vs_Performance_IQ": {
+      "r": 0.138891850116292,
+      "p": 0.3412146544161307
+    },
+    "pupil_slope_vs_Digit_span": {
+      "r": -0.1035080456247076,
+      "p": 0.47909664752655495
+    },
+    "pupil_late_minus_early_vs_Verbal_IQ": {
+      "r": -0.03995721856088029,
+      "p": 0.785169302930052
+    },
+    "pupil_late_minus_early_vs_Performance_IQ": {
+      "r": -0.01780274124267019,
+      "p": 0.9033649849762004
+    },
+    "pupil_late_minus_early_vs_Digit_span": {
+      "r": 0.12926754735594814,
+      "p": 0.37602959956618687
+    },
+    "std_rt_vs_Verbal_IQ": {
+      "r": -0.07116012284952981,
+      "p": 0.6270533323978185
+    },
+    "std_rt_vs_Performance_IQ": {
+      "r": -0.22953612158306086,
+      "p": 0.11261714100763953
+    },
+    "std_rt_vs_Digit_span": {
+      "r": -0.33928249173840597,
+      "p": 0.01708458583571956
+    },
+    "cv_rt_vs_Verbal_IQ": {
+      "r": -0.23140356581884505,
+      "p": 0.10964133324667442
+    },
+    "cv_rt_vs_Performance_IQ": {
+      "r": -0.3086416098521678,
+      "p": 0.03095106607093995
+    },
+    "cv_rt_vs_Digit_span": {
+      "r": -0.3450744757711294,
+      "p": 0.015171146426318866
+    },
+    "accuracy_vs_Verbal_IQ": {
+      "r": 0.10774505685198357,
+      "p": 0.46118660431986824
+    },
+    "accuracy_vs_Performance_IQ": {
+      "r": 0.3189473056153599,
+      "p": 0.025503557814922105
+    },
+    "accuracy_vs_Digit_span": {
+      "r": 0.3174602390277657,
+      "p": 0.02623613425676949
+    },
+    "rt_load_diff_vs_Verbal_IQ": {
+      "r": -0.016210001328932515,
+      "p": 0.9119748310002914
+    },
+    "rt_load_diff_vs_Performance_IQ": {
+      "r": -0.13843572919371006,
+      "p": 0.3428180618648963
+    },
+    "rt_load_diff_vs_Digit_span": {
+      "r": 0.08428860125452027,
+      "p": 0.5647402803746138
+    },
+    "rt_distractor_slope_vs_Verbal_IQ": {
+      "r": -0.18717768069189894,
+      "p": 0.19780293394504375
+    },
+    "rt_distractor_slope_vs_Performance_IQ": {
+      "r": -0.019045917747245233,
+      "p": 0.8966523498479984
+    },
+    "rt_distractor_slope_vs_Digit_span": {
+      "r": 0.11033564445555287,
+      "p": 0.45041709726122
+    }
+  }
+}

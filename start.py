@@ -56,12 +56,19 @@ FRONTEND_DIR = REPO_ROOT / "frontend"
 FRONTEND_BUILD_WEB = FRONTEND_DIR / "build" / "web"
 VENV_DIR = REPO_ROOT / ".venv"
 
+# Auto-installed Flutter SDK location (gitignored). The launcher manages
+# this directory itself; users never need to think about it.
+TOOLS_DIR = REPO_ROOT / "tools"
+FLUTTER_DIR = TOOLS_DIR / "flutter"
+FLUTTER_VERSION = "3.41.6"  # version this codebase is verified against
+
 DEFAULT_ENGINE_HOST = "127.0.0.1"
 DEFAULT_ENGINE_PORT = 8765
 WEB_HOST = "127.0.0.1"
 WEB_PORT = 8080
 
 IS_WIN = platform.system() == "Windows"
+IS_MAC = platform.system() == "Darwin"
 
 # Python version range we accept (mediapipe pin requires <3.13;
 # we technically support 3.10+ but recommend 3.12 because that's what
@@ -248,6 +255,9 @@ def relaunch_in_venv(extra_args: list[str]) -> int:
     We use ``subprocess`` (not ``os.execv``) so the parent process keeps its
     identity — important for clean Ctrl+C delivery on Windows where execv
     has odd behavior with the cmd.exe parent.
+
+    Both SIGINT (Ctrl+C) and SIGTERM (kill / parent shell exit) are forwarded
+    to the child's process group so we never leak orphan engines.
     """
     vp = venv_python_path()
     if not vp.is_file():
@@ -255,13 +265,11 @@ def relaunch_in_venv(extra_args: list[str]) -> int:
         return 1
 
     cmd = [str(vp), str(Path(__file__).resolve())] + extra_args
-    info(f"re-launching with venv python")
+    info("re-launching with venv python")
 
     creationflags = 0
     preexec_fn = None
     if IS_WIN:
-        # Put the child in its own process group so we can deliver
-        # CTRL_BREAK_EVENT for clean shutdown.
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
     else:
         preexec_fn = os.setsid
@@ -273,19 +281,54 @@ def relaunch_in_venv(extra_args: list[str]) -> int:
         preexec_fn=preexec_fn,
     )
 
-    try:
-        return proc.wait()
-    except KeyboardInterrupt:
-        info("Ctrl+C received, forwarding to child…")
+    def _forward_to_child() -> None:
+        """Tear down the venv-python child + everything in its pgroup."""
         try:
             if IS_WIN:
                 proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
             else:
                 os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except (ProcessLookupError, OSError):
+            pass
+
+    # Install a SIGTERM handler so an unfriendly `kill <pid>` against the
+    # outer launcher still tears down the inner launcher + engine. Without
+    # this the venv-python re-exec gets reparented to init.
+    if not IS_WIN:
+        prev_sigterm = signal.getsignal(signal.SIGTERM)
+
+        def _sigterm_handler(signum, frame):
+            info("SIGTERM received, forwarding to child…")
+            _forward_to_child()
+
+        signal.signal(signal.SIGTERM, _sigterm_handler)
+    else:
+        prev_sigterm = None  # type: ignore[assignment]
+
+    try:
+        return proc.wait()
+    except KeyboardInterrupt:
+        info("Ctrl+C received, forwarding to child…")
+        _forward_to_child()
+        try:
             return proc.wait(timeout=8)
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired:
             proc.kill()
             return 130
+    finally:
+        if not IS_WIN and prev_sigterm is not None:
+            try:
+                signal.signal(signal.SIGTERM, prev_sigterm)
+            except (TypeError, ValueError):
+                pass
+        # Belt-and-suspenders: if we exit for any reason and the child is
+        # still alive, take it down.
+        if proc.poll() is None:
+            _forward_to_child()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -373,7 +416,28 @@ def wait_for_engine(host: str, port: int, timeout: float = 30.0) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _bundled_flutter_binary() -> Path:
+    """Path to the flutter binary inside our managed `tools/flutter/`."""
+    if IS_WIN:
+        return FLUTTER_DIR / "bin" / "flutter.bat"
+    return FLUTTER_DIR / "bin" / "flutter"
+
+
 def find_flutter() -> str | None:
+    """Locate a usable flutter binary.
+
+    Priority order (most preferred first):
+      1. The launcher-managed `tools/flutter/bin/flutter` (downloaded by us)
+      2. System PATH lookup
+      3. Common install locations on macOS
+
+    Returns ``None`` if nothing is found — the caller can then trigger
+    ``download_flutter_sdk`` for an auto-install.
+    """
+    bundled = _bundled_flutter_binary()
+    if bundled.is_file():
+        return str(bundled)
+
     candidates = (["flutter.bat", "flutter"] if IS_WIN
                   else ["flutter",
                         "/opt/homebrew/share/flutter/bin/flutter",
@@ -391,20 +455,152 @@ def find_flutter() -> str | None:
     return None
 
 
+def _flutter_sdk_url() -> tuple[str, str]:
+    """Return ``(download_url, archive_filename)`` for the current platform."""
+    base = "https://storage.googleapis.com/flutter_infra_release/releases/stable"
+    machine = platform.machine().lower()
+
+    if IS_MAC:
+        if machine in ("arm64", "aarch64"):
+            name = f"flutter_macos_arm64_{FLUTTER_VERSION}-stable.zip"
+        else:
+            name = f"flutter_macos_{FLUTTER_VERSION}-stable.zip"
+        return f"{base}/macos/{name}", name
+
+    if IS_WIN:
+        name = f"flutter_windows_{FLUTTER_VERSION}-stable.zip"
+        return f"{base}/windows/{name}", name
+
+    # Linux
+    name = f"flutter_linux_{FLUTTER_VERSION}-stable.tar.xz"
+    return f"{base}/linux/{name}", name
+
+
+def _download_with_progress(url: str, dest: Path) -> None:
+    """Download ``url`` to ``dest`` and print a percentage progress bar."""
+    import urllib.request
+
+    last_pct = -1
+
+    def report(blocks: int, block_size: int, total_size: int) -> None:
+        nonlocal last_pct
+        if total_size <= 0:
+            return
+        downloaded = blocks * block_size
+        pct = min(100, int(downloaded * 100 / total_size))
+        if pct != last_pct and pct % 2 == 0:
+            mb_done = downloaded // (1024 * 1024)
+            mb_total = total_size // (1024 * 1024)
+            sys.stdout.write(
+                f"\r{_c('34', '[start]')}   {pct:3d}% "
+                f"({mb_done:>4d} MB / {mb_total} MB)"
+            )
+            sys.stdout.flush()
+            last_pct = pct
+
+    info(f"downloading {url}")
+    info(f"  → {dest}")
+    urllib.request.urlretrieve(url, dest, reporthook=report)
+    sys.stdout.write("\n")
+
+
+def download_flutter_sdk() -> str | None:
+    """Download Flutter SDK to ``tools/flutter/`` and return the binary path.
+
+    Idempotent — if the SDK is already extracted, just returns its path.
+    """
+    bundled = _bundled_flutter_binary()
+    if bundled.is_file():
+        return str(bundled)
+
+    try:
+        url, archive_name = _flutter_sdk_url()
+    except Exception as exc:
+        err(f"can't pick a Flutter SDK URL for this platform: {exc}")
+        return None
+
+    info("Flutter SDK not found — downloading (one-time, ~700 MB)")
+    info("  this won't happen again on subsequent runs")
+    info(f"  cache location: {FLUTTER_DIR}")
+
+    TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    archive_path = TOOLS_DIR / archive_name
+
+    try:
+        _download_with_progress(url, archive_path)
+    except Exception as exc:
+        err(f"download failed: {exc}")
+        if archive_path.exists():
+            archive_path.unlink()
+        return None
+
+    info(f"extracting Flutter SDK into {TOOLS_DIR}")
+    try:
+        if archive_name.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extractall(TOOLS_DIR)
+        elif archive_name.endswith(".tar.xz"):
+            import tarfile
+            with tarfile.open(archive_path) as tf:
+                tf.extractall(TOOLS_DIR)
+        else:
+            err(f"unsupported archive format: {archive_name}")
+            return None
+    except Exception as exc:
+        err(f"extraction failed: {exc}")
+        return None
+    finally:
+        try:
+            archive_path.unlink()
+        except OSError:
+            pass
+
+    if not bundled.is_file():
+        err(f"flutter binary missing at {bundled} after extraction")
+        return None
+
+    if not IS_WIN:
+        # The tarball preserves +x but the zip on macOS sometimes loses it
+        try:
+            bundled.chmod(0o755)
+            for entry in (FLUTTER_DIR / "bin").glob("*"):
+                if entry.is_file():
+                    entry.chmod(0o755)
+        except OSError:
+            pass
+
+    ok(f"Flutter SDK installed at {FLUTTER_DIR}")
+    return str(bundled)
+
+
 def build_frontend_if_needed(force: bool = False) -> bool:
+    """Ensure ``frontend/build/web/index.html`` exists.
+
+    Workflow:
+      1. If the bundle is already built and ``--build-frontend`` was not
+         passed, just use it.
+      2. Find a Flutter binary — try our cached SDK in ``tools/flutter/``,
+         then system PATH, then auto-download.
+      3. ``flutter pub get`` + ``flutter build web``.
+    """
     index = FRONTEND_BUILD_WEB / "index.html"
     if index.is_file() and not force:
-        info(f"Flutter web bundle already built at {FRONTEND_BUILD_WEB}")
+        info(f"Flutter web bundle already present at {FRONTEND_BUILD_WEB}")
         return True
     if not FRONTEND_DIR.is_dir():
         warn(f"no frontend directory at {FRONTEND_DIR}")
         return False
+
     flutter = find_flutter()
     if flutter is None:
-        warn("Flutter SDK not found — skipping frontend build")
-        warn("install Flutter from https://docs.flutter.dev/get-started/install")
-        warn("(or run with --engine-only to suppress this warning)")
-        return False
+        warn("no Flutter SDK detected on system or in tools/")
+        flutter = download_flutter_sdk()
+        if flutter is None:
+            warn("auto-download failed — skipping frontend build")
+            warn("(re-run with --engine-only to suppress this warning)")
+            return False
+
     try:
         info(f"running `flutter pub get` in {FRONTEND_DIR}")
         subprocess.run([flutter, "pub", "get"], cwd=str(FRONTEND_DIR),

@@ -1,0 +1,35 @@
+# =============================================================================
+# Repo-level .gitignore
+# =============================================================================
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+.pytest_cache/
+
+# Virtualenv (managed by start.py)
+.venv/
+
+# Auto-installed Flutter SDK + downloads (managed by start.py)
+tools/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Per-user app data (engine writes session_logs / data.db here on macOS only)
+# (these live in ~/Library/Application Support/adhd_app, NOT the repo, but
+# document the path here for clarity)
+
+# Frontend build outputs are intentionally NOT excluded — see frontend/.gitignore

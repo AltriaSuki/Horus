@@ -81,6 +81,69 @@ def test_capture_worker_is_importable():
     assert _CaptureWorker is not None
 
 
+def test_capture_worker_does_not_shadow_thread_internals():
+    """Regression for a subtle ``threading.Thread`` naming bug.
+
+    ``threading.Thread`` has an internal method called ``_stop()`` that
+    gets invoked during thread cleanup (e.g. when the interpreter unwinds
+    a KeyboardInterrupt). If a ``Thread`` subclass defines an instance
+    attribute *also* called ``_stop`` (say, a ``threading.Event``), the
+    Event shadows the method, and the next time Python tries to call
+    ``self._stop()`` it raises ``TypeError: 'Event' object is not
+    callable``. In our case this crashed the worker every time the user
+    pressed ESC mid-task.
+
+    The fix was to rename our Event attribute to ``_stop_event``. This
+    test guards the fix by asserting no ``Thread`` internal methods
+    are clobbered by our subclass's attributes.
+    """
+    gs = _FakeGazeSystem()
+    worker = _CaptureWorker(gs)
+
+    # None of these Thread internals should be replaced by a non-callable.
+    for attr in ("_stop", "_started", "_tstate_lock", "_bootstrap"):
+        if not hasattr(worker, attr):
+            continue
+        value = getattr(worker, attr)
+        if callable(value):
+            continue  # it's still the method — good
+        # Otherwise, the only tolerated non-callable replacements are
+        # things Thread itself sets (e.g. ``_started`` is an Event in
+        # CPython). Our ``_stop`` override was neither.
+        if attr == "_stop":
+            pytest.fail(
+                "_CaptureWorker defined a non-callable `_stop` attribute, "
+                "shadowing threading.Thread._stop(). Rename it to "
+                "`_stop_event`."
+            )
+
+
+def test_capture_worker_start_stop_cleanly(monkeypatch):
+    """The worker can start, run at least one iteration, and stop without
+    raising — including when the internal capture loop would call
+    Thread's ``_stop()`` during teardown.
+    """
+    gs = _FakeGazeSystem()
+    # Make _extract return None so the inner loop runs quickly and
+    # doesn't try to call MediaPipe.
+    gs._extract = mock.MagicMock(return_value=None)
+    gs.feat_buf = []
+    gs._weighted_mean_feat = mock.MagicMock()
+    gs._predict_screen_point = mock.MagicMock(return_value=(0, 0))
+    gs.smoother = mock.MagicMock()
+    gs.smoother.update = mock.MagicMock(return_value=(0.0, 0.0))
+
+    worker = _CaptureWorker(gs)
+    worker.start()
+    # Give it a moment to run a few iterations
+    import time
+    time.sleep(0.05)
+    worker.stop()
+    worker.join(timeout=2.0)
+
+    assert not worker.is_alive(), "worker did not stop cleanly"
+
+
 def test_capture_one_frame_falls_back_when_no_worker(task):
     """Without a running worker, _capture_one_frame uses the sync path."""
     assert task._capture_worker is None

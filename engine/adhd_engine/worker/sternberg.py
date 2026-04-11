@@ -300,7 +300,13 @@ class _CaptureWorker(threading.Thread):
         super().__init__(name="adhd-capture-worker", daemon=True)
         self._gs = gaze_system
         self._lock = threading.Lock()
-        self._stop = threading.Event()
+        # IMPORTANT: do NOT name this ``self._stop`` — threading.Thread
+        # has an internal ``_stop()`` method that gets invoked during
+        # thread shutdown (including the KeyboardInterrupt path). Naming
+        # our Event ``_stop`` would shadow the method with an instance,
+        # and the next time Python internals called ``self._stop()`` it
+        # would crash with ``'Event' object is not callable``.
+        self._stop_event = threading.Event()
         self._latest: Tuple[float, float, float] = (
             float("nan"), float("nan"), float("nan"),
         )
@@ -308,7 +314,7 @@ class _CaptureWorker(threading.Thread):
     def run(self) -> None:
         """Tight capture loop — camera + features + gaze prediction."""
         gs = self._gs
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 ok, frame = gs.cap.read()
             except Exception:
@@ -345,7 +351,8 @@ class _CaptureWorker(threading.Thread):
             return self._latest
 
     def stop(self) -> None:
-        self._stop.set()
+        """Signal the capture loop to exit. Safe to call multiple times."""
+        self._stop_event.set()
 
 
 class SternbergTask:

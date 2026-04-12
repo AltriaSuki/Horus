@@ -364,15 +364,48 @@ pub struct FeatureConfig {
     pub selected_indices: Vec<usize>,
 }
 
+/// 6-dimension attention profile — derived from 27 features.
+/// Each dimension is normalised to [0, 100] for display.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AttentionProfile {
+    /// 持续注意力 — from pupil_late_minus_early + rt_skewness
+    pub sustained_attention: f64,
+    /// 认知负荷敏感度 — from pupil_load_diff + rt_load_diff
+    pub cognitive_load_sensitivity: f64,
+    /// 抗干扰能力 — from rt_distractor_slope + acc_distractor_slope
+    pub distractor_resistance: f64,
+    /// 反应稳定性 — from cv_rt + std_rt
+    pub response_stability: f64,
+    /// 瞳孔活跃度 (认知投入) — from pupil_max_peak + pupil_slope
+    pub pupil_engagement: f64,
+    /// 注视控制 — from gaze_var_x + gaze_path_normalized
+    pub gaze_control: f64,
+}
+
+/// Per-block statistics for the attention timeline.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BlockStats {
+    pub block_num: u32,
+    pub accuracy: f64,
+    pub mean_rt_ms: f64,
+    pub n_trials: u32,
+    pub n_correct: u32,
+    pub omission_rate: f64,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct AdhdReport {
-    pub prediction: String,         // "ADHD" or "Control"
+    pub prediction: String,
     pub adhd_probability: f64,
     pub control_probability: f64,
-    pub risk_level: String,         // HIGH / MODERATE / LOW / MINIMAL
+    pub risk_level: String,
     pub feature_values: HashMap<String, f64>,
     pub feature_importance: HashMap<String, f64>,
     pub model_info: String,
+    /// 6-dimension attention radar profile
+    pub attention_profile: AttentionProfile,
+    /// Per-block accuracy + RT for the fatigue timeline
+    pub block_stats: Vec<BlockStats>,
 }
 
 impl RfModelBundle {
@@ -459,8 +492,158 @@ impl RfModelBundle {
             feature_values,
             feature_importance,
             model_info: "Random Forest (LOOCV Accuracy: 80.0%)".to_string(),
+            attention_profile: AttentionProfile::default(),
+            block_stats: Vec::new(),
         }
     }
+}
+
+impl Default for AttentionProfile {
+    fn default() -> Self {
+        Self {
+            sustained_attention: 50.0,
+            cognitive_load_sensitivity: 50.0,
+            distractor_resistance: 50.0,
+            response_stability: 50.0,
+            pupil_engagement: 50.0,
+            gaze_control: 50.0,
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Attention profile + block stats — data expansion features
+// ═══════════════════════════════════════════════════════════════════
+
+/// Compute the 6-dimension attention profile from 27 features.
+///
+/// Each dimension is a composite of 2+ raw features, mapped to [0, 100]
+/// using sigmoid-like scaling so extreme values don't blow up the chart.
+///
+/// Higher = better (e.g., sustained_attention=90 means good sustained attention).
+pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionProfile {
+    let get = |name: &str| *features.get(name).unwrap_or(&0.0);
+
+    // Helper: map a raw value to [0, 100] via sigmoid centering around `center`
+    // with steepness `k`. Higher raw = higher output when `invert=false`.
+    let sigmoid_map = |raw: f64, center: f64, k: f64, invert: bool| -> f64 {
+        let x = if invert { center - raw } else { raw - center };
+        100.0 / (1.0 + (-k * x).exp())
+    };
+
+    // 1. Sustained attention — 持续注意力
+    //    Low rt_skewness + small pupil late-minus-early = good sustained attention
+    //    (ADHD kids have high skewness from long-tail slow RTs as they lose focus)
+    let sustained = {
+        let skew = get("rt_skewness");
+        let late_early = get("pupil_late_minus_early");
+        // Both should be LOW for good sustained attention → invert
+        let s1 = sigmoid_map(skew, 0.5, 3.0, true);      // skew < 0.5 = good
+        let s2 = sigmoid_map(late_early, 0.02, 50.0, true); // late-early < 0.02 = stable
+        (s1 + s2) / 2.0
+    };
+
+    // 2. Cognitive load sensitivity — 认知负荷敏感度
+    //    Small rt_load_diff + small pupil_load_diff = good (can handle both loads)
+    let cog_load = {
+        let rt_diff = get("rt_load_diff").abs();
+        let pupil_diff = get("pupil_load_diff").abs();
+        let s1 = sigmoid_map(rt_diff, 100.0, 0.02, true);   // <100ms diff = good
+        let s2 = sigmoid_map(pupil_diff, 0.03, 30.0, true); // <0.03 = good
+        (s1 + s2) / 2.0
+    };
+
+    // 3. Distractor resistance — 抗干扰能力
+    //    Small (flat) distractor slopes = not affected by distractors
+    let distractor = {
+        let rt_slope = get("rt_distractor_slope").abs();
+        let acc_slope = get("acc_distractor_slope").abs();
+        let s1 = sigmoid_map(rt_slope, 20.0, 0.05, true);
+        let s2 = sigmoid_map(acc_slope, 0.05, 20.0, true);
+        (s1 + s2) / 2.0
+    };
+
+    // 4. Response stability — 反应稳定性
+    //    Low cv_rt = consistent response times
+    let stability = {
+        let cv = get("cv_rt");
+        sigmoid_map(cv, 0.25, 10.0, true) // cv < 0.25 = stable
+    };
+
+    // 5. Pupil engagement — 瞳孔活跃度 (认知投入)
+    //    High pupil_max_peak + positive slope = actively engaged
+    let engagement = {
+        let peak = get("pupil_max_peak");
+        let slope = get("pupil_slope");
+        let auc = get("pupil_auc");
+        let s1 = sigmoid_map(peak, 0.05, 20.0, false);  // peak > 0.05 = engaged
+        let s2 = sigmoid_map(auc, 0.02, 50.0, false);   // positive AUC = engaged
+        (s1 + s2) / 2.0
+    };
+
+    // 6. Gaze control — 注视控制
+    //    Low gaze_var_x + low path = controlled eye movements
+    let gaze_ctrl = {
+        let var_x = get("gaze_var_x");
+        let path = get("gaze_path_normalized");
+        let s1 = sigmoid_map(var_x, 10000.0, 0.0002, true); // <10000 px² var = good
+        let s2 = sigmoid_map(path, 5.0, 0.3, true);          // <5 px/frame = good
+        (s1 + s2) / 2.0
+    };
+
+    AttentionProfile {
+        sustained_attention: sustained.clamp(0.0, 100.0),
+        cognitive_load_sensitivity: cog_load.clamp(0.0, 100.0),
+        distractor_resistance: distractor.clamp(0.0, 100.0),
+        response_stability: stability.clamp(0.0, 100.0),
+        pupil_engagement: engagement.clamp(0.0, 100.0),
+        gaze_control: gaze_ctrl.clamp(0.0, 100.0),
+    }
+}
+
+/// Compute per-block accuracy + RT statistics for the fatigue timeline.
+pub fn compute_block_stats(trials: &[TrialResult]) -> Vec<BlockStats> {
+    let max_block = trials.iter().map(|t| t.block_num).max().unwrap_or(0);
+    let mut stats = Vec::new();
+
+    for block in 1..=max_block {
+        let block_trials: Vec<&TrialResult> = trials.iter()
+            .filter(|t| t.block_num == block)
+            .collect();
+
+        let n = block_trials.len() as u32;
+        let n_responded: Vec<&TrialResult> = block_trials.iter()
+            .filter(|t| t.response.is_some() && !t.reaction_time.is_nan())
+            .copied()
+            .collect();
+        let n_correct = n_responded.iter().filter(|t| t.correct).count() as u32;
+        let n_omission = n - n_responded.len() as u32;
+
+        let mean_rt_ms = if n_responded.is_empty() {
+            0.0
+        } else {
+            n_responded.iter()
+                .map(|t| t.reaction_time * 1000.0)
+                .sum::<f64>() / n_responded.len() as f64
+        };
+
+        let accuracy = if n_responded.is_empty() {
+            0.0
+        } else {
+            n_correct as f64 / n_responded.len() as f64
+        };
+
+        stats.push(BlockStats {
+            block_num: block,
+            accuracy,
+            mean_rt_ms,
+            n_trials: n,
+            n_correct,
+            omission_rate: n_omission as f64 / n.max(1) as f64,
+        });
+    }
+
+    stats
 }
 
 fn predict_single_tree(tree: &TreeData, x: &[f64]) -> Vec<f64> {

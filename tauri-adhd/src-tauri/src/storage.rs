@@ -147,6 +147,8 @@ pub fn get_report(session_id: &str) -> anyhow::Result<Option<crate::inference::A
             feature_values: serde_json::from_str(&fv).unwrap_or_default(),
             feature_importance: serde_json::from_str(&fi).unwrap_or_default(),
             model_info: row.get(5)?,
+            attention_profile: crate::inference::AttentionProfile::default(),
+            block_stats: Vec::new(),
         })
     })?;
     match rows.next() {

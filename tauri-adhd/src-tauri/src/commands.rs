@@ -290,7 +290,21 @@ pub fn finish_screening(
     let model = inference::RfModelBundle::load(&model_path)
         .map_err(|e| format!("Failed to load RF model from {:?}: {}", model_path, e))?;
 
-    let report = model.predict(&features);
+    let mut report = model.predict(&features);
+
+    // Add the 6-dimension attention profile
+    report.attention_profile = inference::compute_attention_profile(&features);
+    log::info!(
+        "Attention profile: sustained={:.0}, stability={:.0}, gaze={:.0}",
+        report.attention_profile.sustained_attention,
+        report.attention_profile.response_stability,
+        report.attention_profile.gaze_control,
+    );
+
+    // Add per-block stats for the fatigue timeline
+    report.block_stats = inference::compute_block_stats(&trials);
+    log::info!("Block stats: {} blocks", report.block_stats.len());
+
     log::info!(
         "Prediction: {} (prob={:.2}, risk={})",
         report.prediction, report.adhd_probability, report.risk_level
@@ -333,5 +347,8 @@ pub fn run_inference(
     let model_path = models_dir.join("rf_model.json");
     let model = inference::RfModelBundle::load(&model_path)
         .map_err(|e| format!("Failed to load RF model: {}", e))?;
-    Ok(model.predict(&features))
+    let mut report = model.predict(&features);
+    report.attention_profile = inference::compute_attention_profile(&features);
+    report.block_stats = inference::compute_block_stats(&trials);
+    Ok(report)
 }

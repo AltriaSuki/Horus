@@ -28,13 +28,10 @@
   let error = $state(null);
   let report = $state(null);
 
-  // Encouraging messages
   const encouragements = [
     '你做得很棒',
     '继续加油',
-    '集中注意力',
     '保持专注',
-    '马上就好了',
     '你真厉害',
     '快要完成了',
     '坚持住',
@@ -42,7 +39,6 @@
   let encourageIndex = $state(0);
   let encourageTimer = null;
 
-  // Subscribe to stores
   const unsubs = [];
 
   onMount(() => {
@@ -54,7 +50,6 @@
     unsubs.push(sessionError.subscribe((v) => { error = v; }));
     unsubs.push(currentReport.subscribe((v) => { report = v; }));
 
-    // Rotate encouragements
     encourageTimer = setInterval(() => {
       encourageIndex = (encourageIndex + 1) % encouragements.length;
     }, 4000);
@@ -67,6 +62,10 @@
 
   function handleCalibrationDone() {
     phase.set(PHASES.RUNNING);
+  }
+
+  function handleCalibrationCancel() {
+    goto('/screening');
   }
 
   async function handleAllTrialsDone(event) {
@@ -88,11 +87,10 @@
 
       currentReport.set(reportResult);
       phase.set(PHASES.DONE);
-
       goto('/screening/result');
     } catch (e) {
       console.error('Failed to finish screening:', e);
-      sessionError.set('生成报告失败: ' + e);
+      sessionError.set(String(e));
       phase.set(PHASES.ERROR);
     }
   }
@@ -101,83 +99,100 @@
     goto('/screening');
   }
 
-  // Progress ring properties
-  const ringSize = 200;
-  const strokeWidth = 12;
+  // SVG progress ring
+  const ringSize = 240;
+  const strokeWidth = 16;
   const radius = (ringSize - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
   let strokeDashoffset = $derived(circumference * (1 - totalProgress));
-
-  let phaseBannerText = $derived(
-    currentPhase === PHASES.CALIBRATING ? '校准眼动追踪'
-    : currentPhase === PHASES.RUNNING ? '视觉记忆闯关中'
-    : currentPhase === PHASES.GENERATING_REPORT ? '正在生成报告...'
-    : currentPhase === PHASES.ERROR ? '发生错误'
-    : '准备中'
-  );
 </script>
 
 <div class="running-page">
   {#if currentPhase === PHASES.CALIBRATING}
-    <CalibrationCanvas onDone={handleCalibrationDone} />
+    <CalibrationCanvas
+      onDone={handleCalibrationDone}
+      onCancel={handleCalibrationCancel}
+    />
+
   {:else if currentPhase === PHASES.RUNNING || currentPhase === PHASES.BREAK}
     <SternbergCanvas onAllDone={handleAllTrialsDone} />
+
   {:else if currentPhase === PHASES.GENERATING_REPORT}
     <div class="overlay-screen">
-      <div class="report-generating">
-        <!-- Progress ring -->
-        <div class="progress-ring-wrapper">
-          <svg width={ringSize} height={ringSize} class="progress-ring">
-            <circle
-              cx={ringSize / 2}
-              cy={ringSize / 2}
-              r={radius}
-              fill="none"
-              stroke="rgba(255,255,255,0.1)"
-              stroke-width={strokeWidth}
-            />
-            <circle
-              cx={ringSize / 2}
-              cy={ringSize / 2}
-              r={radius}
-              fill="none"
-              stroke="var(--secondary)"
-              stroke-width={strokeWidth}
-              stroke-linecap="round"
-              stroke-dasharray={circumference}
-              stroke-dashoffset={strokeDashoffset}
-              transform="rotate(-90 {ringSize / 2} {ringSize / 2})"
-            />
+      <div class="report-card">
+        <!-- Big animated progress ring -->
+        <div class="ring-wrapper">
+          <svg width={ringSize} height={ringSize} class="ring-svg">
+            <circle cx={ringSize/2} cy={ringSize/2} r={radius}
+                    fill="none" stroke="#FFE8D1" stroke-width={strokeWidth} />
+            <circle cx={ringSize/2} cy={ringSize/2} r={radius}
+                    fill="none" stroke="#FF8C42" stroke-width={strokeWidth}
+                    stroke-linecap="round"
+                    stroke-dasharray={circumference}
+                    stroke-dashoffset={strokeDashoffset}
+                    transform="rotate(-90 {ringSize/2} {ringSize/2})"
+                    class="ring-progress" />
           </svg>
-          <div class="ring-center-text">
-            <span class="ring-percent">{Math.round(totalProgress * 100)}%</span>
+          <div class="ring-center">
+            <span class="ring-pct">{Math.round(totalProgress * 100)}%</span>
+            <span class="ring-label">已完成</span>
           </div>
         </div>
 
-        <div class="generating-spinner"></div>
-        <h2 class="generating-text">正在分析注意力表现...</h2>
-        <p class="generating-sub">请稍候，这可能需要几秒钟</p>
+        <div class="report-spinner"></div>
+        <h2 class="report-title">正在分析注意力表现...</h2>
+        <p class="report-sub">正在提取 27 个注意力特征</p>
+
+        <!-- Stats row -->
+        <div class="stats-row">
+          <div class="stat-chip">
+            <div class="stat-icon" style="background: rgba(78,205,196,0.15);">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <path d="M10 2L12.5 7.5L18 8.5L14 12.5L15 18L10 15L5 18L6 12.5L2 8.5L7.5 7.5L10 2Z"
+                      fill="#4ECDC4"/>
+              </svg>
+            </div>
+            <div>
+              <div class="stat-label">准确率</div>
+              <div class="stat-value">{Math.round(currentAcc * 100)}%</div>
+            </div>
+          </div>
+          <div class="stat-chip">
+            <div class="stat-icon" style="background: rgba(255,209,102,0.15);">
+              <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+                <rect x="3" y="10" width="3" height="7" rx="1" fill="#FFD166"/>
+                <rect x="8.5" y="6" width="3" height="11" rx="1" fill="#FFD166"/>
+                <rect x="14" y="3" width="3" height="14" rx="1" fill="#FFD166"/>
+              </svg>
+            </div>
+            <div>
+              <div class="stat-label">试次</div>
+              <div class="stat-value">{trialsCompleted}/{TOTAL_TRIALS}</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+
   {:else if currentPhase === PHASES.ERROR}
     <div class="overlay-screen">
-      <div class="error-screen">
-        <svg width="64" height="64" viewBox="0 0 64 64" fill="none">
-          <circle cx="32" cy="32" r="28" fill="var(--error)" opacity="0.15" />
-          <circle cx="32" cy="32" r="20" fill="var(--error)" opacity="0.3" />
-          <line x1="24" y1="24" x2="40" y2="40" stroke="var(--error)" stroke-width="3" stroke-linecap="round" />
-          <line x1="40" y1="24" x2="24" y2="40" stroke="var(--error)" stroke-width="3" stroke-linecap="round" />
-        </svg>
+      <div class="error-card">
+        <div class="error-icon-ring">
+          <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+            <line x1="16" y1="16" x2="32" y2="32" stroke="#E63946" stroke-width="3" stroke-linecap="round"/>
+            <line x1="32" y1="16" x2="16" y2="32" stroke="#E63946" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+        </div>
         <h2 class="error-title">出错了</h2>
-        <p class="error-detail">{error || '未知错误'}</p>
-        <button class="btn-primary" onclick={handleExit}>返回</button>
+        <p class="error-msg">{error || '未知错误'}</p>
+        <button class="btn-back" onclick={handleExit}>返回</button>
       </div>
     </div>
+
   {:else}
-    <!-- Idle / transition state -->
     <div class="overlay-screen">
-      <div class="generating-spinner"></div>
-      <p>准备中...</p>
+      <div class="report-spinner"></div>
+      <p style="margin-top: 20px; color: var(--text-muted);">准备中...</p>
     </div>
   {/if}
 </div>
@@ -196,73 +211,172 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--bg);
+    background: #FFF8F0;
   }
 
-  /* Generating report */
-  .report-generating {
+  /* ── Report generating ─────────────────────────────────── */
+
+  .report-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-lg);
+    gap: 24px;
+    padding: 48px 32px;
+    max-width: 420px;
     text-align: center;
-    padding: var(--space-2xl);
   }
-  .progress-ring-wrapper {
+
+  .ring-wrapper {
     position: relative;
-    width: 200px;
-    height: 200px;
+    width: 240px;
+    height: 240px;
   }
-  .progress-ring {
-    transform: rotate(0deg);
+
+  .ring-svg {
+    filter: drop-shadow(0 8px 24px rgba(255, 140, 66, 0.2));
   }
-  .ring-center-text {
+
+  .ring-progress {
+    transition: stroke-dashoffset 0.5s ease;
+  }
+
+  .ring-center {
     position: absolute;
     inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .ring-pct {
+    font-size: 52px;
+    font-weight: 800;
+    color: #FF8C42;
+    line-height: 1;
+  }
+
+  .ring-label {
+    font-size: 14px;
+    color: #8B6F5C;
+    margin-top: 4px;
+  }
+
+  .report-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid #FFE0CC;
+    border-top-color: #FF8C42;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .report-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: #2B1810;
+    margin: 0;
+  }
+
+  .report-sub {
+    font-size: 15px;
+    color: #8B6F5C;
+    margin: 0;
+  }
+
+  /* Stats chips */
+  .stats-row {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+  }
+
+  .stat-chip {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: #FFFFFF;
+    border: 1px solid #F0E0CC;
+    border-radius: 20px;
+    padding: 14px 20px;
+    min-width: 140px;
+  }
+
+  .stat-icon {
+    width: 44px;
+    height: 44px;
+    border-radius: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
-  .ring-percent {
-    font-size: var(--font-size-2xl);
-    font-weight: 800;
-    color: var(--text);
-  }
-  .generating-spinner {
-    width: 40px;
-    height: 40px;
-    border: 4px solid #E8DDD4;
-    border-top-color: var(--primary);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-  .generating-text {
-    font-size: var(--font-size-xl);
-    font-weight: 700;
-    color: var(--text);
-  }
-  .generating-sub {
-    font-size: var(--font-size-base);
-    color: var(--text-muted);
+
+  .stat-label {
+    font-size: 12px;
+    color: #8B6F5C;
+    font-weight: 600;
   }
 
-  /* Error screen */
-  .error-screen {
+  .stat-value {
+    font-size: 18px;
+    font-weight: 700;
+    color: #2B1810;
+  }
+
+  /* ── Error screen ───────────────────────────────────────── */
+
+  .error-card {
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: var(--space-md);
+    gap: 16px;
+    padding: 48px 32px;
+    max-width: 380px;
     text-align: center;
-    padding: var(--space-2xl);
   }
+
+  .error-icon-ring {
+    width: 88px;
+    height: 88px;
+    border-radius: 50%;
+    background: rgba(230, 57, 70, 0.1);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
   .error-title {
-    font-size: var(--font-size-xl);
+    font-size: 24px;
     font-weight: 700;
-    color: var(--error);
+    color: #E63946;
+    margin: 0;
   }
-  .error-detail {
-    font-size: var(--font-size-base);
-    color: var(--text-muted);
-    max-width: 400px;
+
+  .error-msg {
+    font-size: 14px;
+    color: #8B6F5C;
+    margin: 0;
+    word-break: break-all;
+  }
+
+  .btn-back {
+    margin-top: 12px;
+    background: #FF8C42;
+    color: white;
+    border: none;
+    border-radius: 28px;
+    padding: 14px 36px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.15s, box-shadow 0.15s;
+  }
+  .btn-back:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(255, 140, 66, 0.35);
   }
 </style>

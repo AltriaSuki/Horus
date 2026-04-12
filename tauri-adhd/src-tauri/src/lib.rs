@@ -40,7 +40,15 @@ pub fn run() {
             commands::create_subject,
             commands::list_subjects,
             commands::start_screening,
+            commands::get_session,
             commands::get_report,
+            commands::list_subject_sessions,
+            commands::submit_calibration_sample,
+            commands::finish_calibration,
+            commands::submit_trial_result,
+            commands::finish_screening,
+            commands::launch_game,
+            commands::stop_game,
             commands::run_inference,
         ])
         .run(tauri::generate_context!())

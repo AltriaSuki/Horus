@@ -1,0 +1,16 @@
+# Rust build
+src-tauri/target/
+
+# Node
+node_modules/
+.svelte-kit/
+build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Models are intentionally tracked (needed for the app to work)
+# But keep original tflite files that have onnx equivalents excluded
+models/face_detection_short.tflite
+models/iris_landmark.tflite

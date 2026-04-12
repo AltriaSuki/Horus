@@ -181,39 +181,46 @@
     ctx.fillStyle = '#37302B';
     ctx.fillRect(0, 0, w, h);
 
-    // ── Top banner ──────────────────────────────────────────────
-    const bannerH = 56;
+    // ── Banner — positioned OPPOSITE to the current target ─────
+    // If target is in top half → banner at bottom; if bottom → at top.
+    // This prevents the text from overlapping the calibration dot.
+    const bannerH = 48;
     const bannerText = mode === 'calibrating'
       ? `[${currentPointIndex + 1}/${calibrationPoints.length}]  请注视圆点并点击`
       : mode === 'validating'
         ? `[${currentPointIndex + 1}/${validationPoints.length}]  请注视圆点 (不用点击)`
         : '';
 
-    if (bannerText && !showResult) {
-      // Orange banner for calibrating, mint for validating
+    if (bannerText && !showResult && currentPoint) {
       const bannerColor = mode === 'calibrating' ? '#FF8C42' : '#4ECDC4';
-      const bannerWidth = Math.min(500, w - 40);
+      const bannerWidth = Math.min(440, w - 60);
+      // Place banner on the opposite side of the screen from the target
+      const targetInTopHalf = currentPoint.y < 0.5;
+      const bannerY = targetInTopHalf ? h - bannerH - 20 : 20;
 
-      ctx.fillStyle = 'rgba(0,0,0,0.3)';
-      roundRect(ctx, (w - bannerWidth) / 2, 22, bannerWidth, bannerH, 28);
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      roundRect(ctx, (w - bannerWidth) / 2, bannerY + 2, bannerWidth, bannerH, 24);
       ctx.fill();
       ctx.fillStyle = bannerColor;
-      roundRect(ctx, (w - bannerWidth) / 2, 20, bannerWidth, bannerH, 28);
+      roundRect(ctx, (w - bannerWidth) / 2, bannerY, bannerWidth, bannerH, 24);
       ctx.fill();
 
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = '700 20px "PingFang SC", "Microsoft YaHei", sans-serif';
+      ctx.font = '700 18px "PingFang SC", "Microsoft YaHei", sans-serif';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(bannerText, w / 2, 20 + bannerH / 2);
+      ctx.fillText(bannerText, w / 2, bannerY + bannerH / 2);
     }
 
-    // ── ESC hint ────────────────────────────────────────────────
-    ctx.fillStyle = 'rgba(255,248,240,0.3)';
-    ctx.font = '400 14px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.textAlign = 'right';
-    ctx.textBaseline = 'top';
-    ctx.fillText('按 ESC 退出', w - 20, 90);
+    // ── ESC hint — also on opposite side, but smaller ───────────
+    if (currentPoint) {
+      const hintY = currentPoint.y < 0.5 ? h - 16 : 20;
+      ctx.fillStyle = 'rgba(255,248,240,0.25)';
+      ctx.font = '400 13px "PingFang SC", "Microsoft YaHei", sans-serif';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = currentPoint.y < 0.5 ? 'bottom' : 'top';
+      ctx.fillText('按 ESC 退出', w - 16, hintY);
+    }
 
     // ── Content ─────────────────────────────────────────────────
     ctx.textAlign = 'center';

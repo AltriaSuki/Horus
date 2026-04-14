@@ -46,13 +46,10 @@
   async function confirmAndStart() {
     loading = true;
     error = null;
-    loadingMsg = '正在检查摄像头权限...';
+    loadingMsg = '正在启动摄像头...';
     try {
-      // 1) 先探测摄像头权限（首次会弹出系统授权对话框）
-      await invoke('check_camera_permission');
-
-      // 2) 正式启动早筛
-      loadingMsg = '正在启动筛查...';
+      // 直接启动早筛 — 首次调用会触发 macOS 权限弹框。避免单独的预探测以
+      // 防止"打开→关闭→再打开"期间 AVFoundation 未及时释放导致第二次失败。
       resetSession();
       const session = await invoke('start_screening', {
         subjectId: selectedSubjectId,
@@ -70,7 +67,7 @@
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
       error = msg;
       console.error(e);
-      // 留在 permission 阶段，让用户看到错误并选择重试/取消
+      // 留在 permission 阶段让用户看到错误并选择重试/取消
     } finally {
       loading = false;
       loadingMsg = '';

@@ -68,6 +68,34 @@ pub fn get_health() -> HashMap<String, String> {
     h
 }
 
+/// 把摄像头相关的原始错误分类成带引导的中文提示。
+fn classify_camera_error(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("permission")
+        || lower.contains("authorized")
+        || lower.contains("denied")
+        || lower.contains("not authorized")
+    {
+        format!(
+            "摄像头权限被拒绝。\n请打开「系统设置 → 隐私与安全性 → 摄像头」，勾选本应用后重启再试。\n\n原始错误: {}",
+            raw
+        )
+    } else if lower.contains("no such") || lower.contains("not found") ||
+              lower.contains("no camera") || lower.contains("no device")
+    {
+        format!("未检测到摄像头，请确认设备已连接。\n\n原始错误: {}", raw)
+    } else if lower.contains("fulfill") || lower.contains("requestedformat") {
+        format!(
+            "摄像头不支持请求的视频格式。请联系开发者适配你的设备，或尝试换一台摄像头。\n\n原始错误: {}",
+            raw
+        )
+    } else if lower.contains("busy") || lower.contains("in use") {
+        format!("摄像头被其他应用占用，请关闭视频/会议软件后重试。\n\n原始错误: {}", raw)
+    } else {
+        format!("摄像头不可用: {}", raw)
+    }
+}
+
 /// Probe camera availability before starting a screening session.
 /// Opens the default camera briefly, then immediately releases it.
 /// On macOS, the first call triggers the OS TCC permission prompt.
@@ -78,34 +106,7 @@ pub fn check_camera_permission() -> Result<String, String> {
             cap.stop();
             Ok("摄像头可用".into())
         }
-        Err(e) => {
-            let raw = e.to_string();
-            let lower = raw.to_lowercase();
-            let msg = if lower.contains("permission")
-                || lower.contains("authorized")
-                || lower.contains("denied")
-                || lower.contains("not authorized")
-            {
-                format!(
-                    "摄像头权限被拒绝。\n请打开「系统设置 → 隐私与安全性 → 摄像头」，勾选本应用后重启再试。\n\n原始错误: {}",
-                    raw
-                )
-            } else if lower.contains("no such") || lower.contains("not found") ||
-                      lower.contains("no camera") || lower.contains("no device")
-            {
-                format!("未检测到摄像头，请确认设备已连接。\n\n原始错误: {}", raw)
-            } else if lower.contains("fulfill") || lower.contains("format") || lower.contains("requestedformat") {
-                format!(
-                    "摄像头不支持请求的视频格式。这通常是驱动兼容性问题，请尝试换一台设备，或联系开发者更新摄像头格式支持。\n\n原始错误: {}",
-                    raw
-                )
-            } else if lower.contains("busy") || lower.contains("in use") {
-                format!("摄像头被其他应用占用，请关闭视频/会议软件后重试。\n\n原始错误: {}", raw)
-            } else {
-                format!("摄像头不可用: {}", raw)
-            };
-            Err(msg)
-        }
+        Err(e) => Err(classify_camera_error(&e.to_string())),
     }
 }
 
@@ -204,10 +205,7 @@ pub fn start_screening(
             }
             Err(e) => {
                 drop(state);
-                return fail(format!(
-                    "摄像头初始化失败: {}. 请检查摄像头权限或设备是否被占用",
-                    e
-                ));
+                return fail(classify_camera_error(&e.to_string()));
             }
         }
     }

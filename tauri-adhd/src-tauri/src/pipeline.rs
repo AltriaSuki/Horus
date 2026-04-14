@@ -170,6 +170,8 @@ pub struct GazePipeline {
     pub screen_w: u32,
     pub screen_h: u32,
     frame_count: u64,
+    /// 最近一帧的原始 8D 特征，供 calibration 在点击瞬间采样
+    last_feature: Option<[f64; 8]>,
 }
 
 impl GazePipeline {
@@ -209,6 +211,7 @@ impl GazePipeline {
             screen_w,
             screen_h,
             frame_count: 0,
+            last_feature: None,
         })
     }
 
@@ -259,6 +262,7 @@ impl GazePipeline {
             Some(lm) if lm.len() >= 468 => lm,
             _ => {
                 log::debug!("No face detected at t={:.3}", t);
+                self.last_feature = None;
                 return invalid;
             }
         };
@@ -270,6 +274,7 @@ impl GazePipeline {
 
         if ear < BLINK_EAR_THRESHOLD {
             log::debug!("Blink detected (EAR={:.3}) at t={:.3}", ear, t);
+            self.last_feature = None;
             return invalid;
         }
 
@@ -278,6 +283,7 @@ impl GazePipeline {
             Some(f) => f,
             None => {
                 log::debug!("Iris features unavailable at t={:.3}", t);
+                self.last_feature = None;
                 return invalid;
             }
         };
@@ -296,6 +302,18 @@ impl GazePipeline {
             model_gaze[0],
             model_gaze[1],
         ];
+
+        // 缓存最新 8D 特征给 calibration 采样使用
+        self.last_feature = Some([
+            feat_8d[0] as f64,
+            feat_8d[1] as f64,
+            feat_8d[2] as f64,
+            feat_8d[3] as f64,
+            feat_8d[4] as f64,
+            feat_8d[5] as f64,
+            feat_8d[6] as f64,
+            feat_8d[7] as f64,
+        ]);
 
         // Quality score: how "open" the eyes are
         let _quality = ((ear - BLINK_EAR_THRESHOLD) / 0.2).clamp(0.0, 1.0);
@@ -426,6 +444,11 @@ impl GazePipeline {
     /// Returns None if there aren't enough frames yet.
     pub fn current_feature(&self) -> Option<[f64; 8]> {
         self.feat_buf.weighted_mean()
+    }
+
+    /// 最近一帧的 8D 特征；无人脸/眨眼/虹膜缺失时为 None。
+    pub fn latest_feature(&self) -> Option<[f64; 8]> {
+        self.last_feature
     }
 }
 

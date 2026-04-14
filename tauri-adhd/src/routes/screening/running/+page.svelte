@@ -68,6 +68,14 @@
     goto('/screening');
   }
 
+  function handleSternbergCancel() {
+    // User bailed mid-task via ESC. The already-submitted trial results are
+    // safe in the Rust-side SESSION state; they'll be wiped when the next
+    // start_screening runs (commands.rs resets trial_results there).
+    // No cancel_session command on the backend yet — just leave the page.
+    goto('/screening');
+  }
+
   async function handleAllTrialsDone(event) {
     phase.set(PHASES.GENERATING_REPORT);
 
@@ -115,7 +123,7 @@
     />
 
   {:else if currentPhase === PHASES.RUNNING || currentPhase === PHASES.BREAK}
-    <SternbergCanvas onAllDone={handleAllTrialsDone} />
+    <SternbergCanvas onAllDone={handleAllTrialsDone} onCancel={handleSternbergCancel} />
 
   {:else if currentPhase === PHASES.GENERATING_REPORT}
     <div class="overlay-screen">

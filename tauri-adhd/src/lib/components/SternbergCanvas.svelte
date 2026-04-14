@@ -23,8 +23,18 @@
     TOTAL_BLOCKS,
   } from '$lib/stores/session.js';
 
-  /** @type {() => void} */
-  let { onAllDone } = $props();
+  /** @type {{ onAllDone: () => void, onCancel?: () => void }} */
+  let { onAllDone, onCancel } = $props();
+
+  // ─── ESC confirm-exit overlay (Bug C) ────────────────────────────
+  // When true, the render loop paints a modal over the current phase
+  // asking the user to confirm exit. Task-phase timing continues to
+  // advance underneath (we deliberately don't pause the paradigm —
+  // the user is either coming back in <1s or leaving anyway).
+  let showExitConfirm = $state(false);
+  // Hit-boxes for the two confirm buttons, recomputed on each draw
+  // so Canvas click dispatch matches what the user sees after resize.
+  let exitConfirmButtons = { continue: null, exit: null };
 
   let canvas = $state(null);
   let ctx = null;
@@ -148,42 +158,50 @@
   // Trial plan generation
   // ═══════════════════════════════════════════════════════════════
   function generateTrialPlan() {
+    // Balanced crossed randomization:
+    // 2 loads x 4 distractors x 2 targets = 16 cells, 10 trials each = 160 trials total.
     const plan = [];
-    for (let b = 1; b <= TOTAL_BLOCKS; b++) {
-      for (let t = 1; t <= TRIALS_PER_BLOCK; t++) {
-        const globalTrial = (b - 1) * TRIALS_PER_BLOCK + t;
-        // Balanced distractor types: cycle through 4 types, 5 of each per block
-        const dType = DISTRACTOR_TYPES[(t - 1) % DISTRACTOR_TYPES.length];
-        // Load: alternate between 1 and 2 (balanced across block)
-        const load = (t % 2 === 0) ? 2 : 1;
-        // Probe is target 50% of the time
-        const isTarget = (t % 4 < 2);
-
-        plan.push({
-          trialNum: globalTrial,
-          blockNum: b,
-          trialInBlock: t,
-          distractorType: dType,
-          load,
-          isTarget,
-        });
+    const cellReps = TOTAL_TRIALS / (2 * DISTRACTOR_TYPES.length * 2);
+    for (const load of [1, 2]) {
+      for (const dType of DISTRACTOR_TYPES) {
+        for (const isTarget of [true, false]) {
+          for (let rep = 0; rep < cellReps; rep++) {
+            // trialNum/blockNum/trialInBlock filled in after shuffle below.
+            plan.push({ load, distractorType: dType, isTarget, trialNum: 0, blockNum: 0, trialInBlock: 0 });
+          }
+        }
       }
     }
-    // Shuffle within each block for randomization
-    for (let b = 0; b < TOTAL_BLOCKS; b++) {
-      const start = b * TRIALS_PER_BLOCK;
-      const end = start + TRIALS_PER_BLOCK;
-      const block = plan.slice(start, end);
-      // Fisher-Yates shuffle
-      for (let i = block.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [block[i], block[j]] = [block[j], block[i]];
-      }
-      // Re-assign trial numbers after shuffle
-      for (let i = 0; i < block.length; i++) {
-        block[i].trialNum = start + i + 1;
-        block[i].trialInBlock = i + 1;
-        plan[start + i] = block[i];
+    // Fisher-Yates shuffle globally across all 160 trials
+    for (let i = plan.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [plan[i], plan[j]] = [plan[j], plan[i]];
+    }
+    // Assign trialNum / blockNum / trialInBlock AFTER shuffle
+    for (let i = 0; i < plan.length; i++) {
+      plan[i].trialNum = i + 1;
+      plan[i].blockNum = Math.floor(i / TRIALS_PER_BLOCK) + 1;
+      plan[i].trialInBlock = (i % TRIALS_PER_BLOCK) + 1;
+    }
+    // Verify cell balance (dev sanity check)
+    console.assert(plan.length === TOTAL_TRIALS, `trialPlan length ${plan.length} !== TOTAL_TRIALS ${TOTAL_TRIALS}`);
+    console.assert(plan.filter((p) => p.load === 1).length === TOTAL_TRIALS / 2, 'load=1 count imbalance');
+    console.assert(plan.filter((p) => p.load === 2).length === TOTAL_TRIALS / 2, 'load=2 count imbalance');
+    for (const dType of DISTRACTOR_TYPES) {
+      console.assert(
+        plan.filter((p) => p.distractorType === dType).length === TOTAL_TRIALS / DISTRACTOR_TYPES.length,
+        `distractor=${dType} count imbalance`,
+      );
+    }
+    console.assert(plan.filter((p) => p.isTarget).length === TOTAL_TRIALS / 2, 'isTarget count imbalance');
+    for (const load of [1, 2]) {
+      for (const dType of DISTRACTOR_TYPES) {
+        for (const isTarget of [true, false]) {
+          const cellCount = plan.filter(
+            (p) => p.load === load && p.distractorType === dType && p.isTarget === isTarget,
+          ).length;
+          console.assert(cellCount === cellReps, `cell (load=${load}, d=${dType}, t=${isTarget}) = ${cellCount}, expected ${cellReps}`);
+        }
       }
     }
     return plan;
@@ -385,9 +403,10 @@
       response: responseKey,
       reaction_time: isNaN(responseTime) ? 0.0 : responseTime / 1000, // to seconds (0 if no response)
       correct: correct,
-      pupil_series: pupilSeries.map((v) => Number(v) || 0),
-      gaze_x_series: gazeXSeries.map((v) => Number(v) || 0),
-      gaze_y_series: gazeYSeries.map((v) => Number(v) || 0),
+      // Preserve NaN placeholders (invalid frames) — backend skips them via .is_nan()
+      pupil_series: pupilSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
+      gaze_x_series: gazeXSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
+      gaze_y_series: gazeYSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
     };
 
     // Send to Rust
@@ -422,6 +441,26 @@
   // Input handling
   // ═══════════════════════════════════════════════════════════════
   function handleKeyDown(e) {
+    // ESC — Bug C: gives the parent (or a panicking kid) a way out.
+    if (e.key === 'Escape') {
+      if (showExitConfirm) {
+        // ESC again while confirm is up → dismiss (safer than double-exit).
+        showExitConfirm = false;
+        return;
+      }
+      if (taskPhase === 'intro' || taskPhase === 'complete') {
+        // No trials in flight → exit immediately without a confirm dialog.
+        performCancel();
+        return;
+      }
+      showExitConfirm = true;
+      return;
+    }
+
+    // While confirm dialog is up, swallow task input so the child can't
+    // accidentally answer the probe underneath.
+    if (showExitConfirm) return;
+
     if (taskPhase === 'probe' && !responseKey) {
       if (e.key === 'f' || e.key === 'F') {
         responseKey = 'f';
@@ -434,6 +473,28 @@
       }
     } else if (taskPhase === 'break' && (e.key === ' ' || e.key === 'Enter')) {
       startNextTrial();
+    }
+  }
+
+  function performCancel() {
+    // Fire cancel callback if the parent provided one; otherwise fall
+    // back to onAllDone so the page at least leaves the canvas screen.
+    if (onCancel) onCancel();
+    else if (onAllDone) onAllDone();
+  }
+
+  function handleCanvasClick(e) {
+    if (!showExitConfirm) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const hit = (btn) =>
+      btn && x >= btn.x && x <= btn.x + btn.w && y >= btn.y && y <= btn.y + btn.h;
+    if (hit(exitConfirmButtons.continue)) {
+      showExitConfirm = false;
+    } else if (hit(exitConfirmButtons.exit)) {
+      showExitConfirm = false;
+      performCancel();
     }
   }
 
@@ -481,17 +542,109 @@
         break;
     }
 
-    // Collect gaze data during active phases
-    if (['fixation', 'encoding', 'encoding_gap', 'maintenance', 'distractor', 'post_distractor_fixation', 'probe'].includes(taskPhase)) {
-      if (currentGaze.valid) {
-        pupilSeries.push(currentGaze.pupil);
-        gazeXSeries.push(currentGaze.x);
-        gazeYSeries.push(currentGaze.y);
-      }
+    // ESC confirm dialog always paints on top (Bug C).
+    if (showExitConfirm) {
+      drawExitConfirm();
     }
 
     animFrameId = requestAnimationFrame(render);
   }
+
+  function drawExitConfirm() {
+    // Warm, kid-friendly modal — orange + cream palette matching the rest
+    // of the app. Not a flat-gray system dialog on purpose.
+    ctx.fillStyle = 'rgba(43, 24, 16, 0.65)';
+    ctx.fillRect(0, 0, screenW, screenH);
+
+    const cardW = Math.min(440, screenW - 60);
+    const cardH = 260;
+    const cardX = (screenW - cardW) / 2;
+    const cardY = (screenH - cardH) / 2;
+
+    // Card shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    drawRoundRect(cardX, cardY + 8, cardW, cardH, 24);
+    ctx.fill();
+    // Card body
+    ctx.fillStyle = '#FFF8F0';
+    drawRoundRect(cardX, cardY, cardW, cardH, 24);
+    ctx.fill();
+    // Orange top accent band
+    ctx.fillStyle = '#FF8C42';
+    drawRoundRect(cardX, cardY, cardW, 8, 24);
+    ctx.fill();
+
+    // Title
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#2B1810';
+    ctx.font = '800 24px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText('确定要退出吗？', cardX + cardW / 2, cardY + 60);
+
+    // Progress summary — uses planCursor (trials started) rather than
+    // trialNum so it reflects actual progress even mid-trial.
+    ctx.fillStyle = '#8B6F5C';
+    ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+    const completed = Math.max(0, planCursor - 1);
+    ctx.fillText(
+      `已完成 ${completed} / ${TOTAL_TRIALS} 题，退出后数据将保留`,
+      cardX + cardW / 2,
+      cardY + 96,
+    );
+    ctx.fillStyle = 'rgba(139, 111, 92, 0.8)';
+    ctx.font = '400 13px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText('按 ESC 可以取消', cardX + cardW / 2, cardY + 120);
+
+    // Buttons
+    const btnW = 140;
+    const btnH = 48;
+    const btnY = cardY + cardH - btnH - 28;
+    const gap = 20;
+    const totalW = btnW * 2 + gap;
+    const leftX = cardX + (cardW - totalW) / 2;
+    const rightX = leftX + btnW + gap;
+
+    // Continue (primary orange)
+    ctx.fillStyle = '#FF8C42';
+    drawRoundRect(leftX, btnY, btnW, btnH, btnH / 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFF8F0';
+    ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('继续闯关', leftX + btnW / 2, btnY + btnH / 2);
+
+    // Exit (ghost / danger)
+    ctx.fillStyle = '#FFF8F0';
+    drawRoundRect(rightX, btnY, btnW, btnH, btnH / 2);
+    ctx.fill();
+    ctx.strokeStyle = '#E94F4F';
+    ctx.lineWidth = 2;
+    drawRoundRect(rightX, btnY, btnW, btnH, btnH / 2);
+    ctx.stroke();
+    ctx.fillStyle = '#E94F4F';
+    ctx.fillText('退出', rightX + btnW / 2, btnY + btnH / 2);
+
+    // reset baseline so later draws aren't surprised
+    ctx.textBaseline = 'alphabetic';
+
+    // Record hit-boxes for click dispatch
+    exitConfirmButtons = {
+      continue: { x: leftX, y: btnY, w: btnW, h: btnH },
+      exit: { x: rightX, y: btnY, w: btnW, h: btnH },
+    };
+  }
+
+  // Phases during which gaze/pupil data should be sampled (one sample per
+  // real camera frame, delivered via gaze_frame events at ~30 Hz).
+  const GAZE_SAMPLING_PHASES = new Set([
+    'fixation',
+    'encoding',
+    'encoding_gap',
+    'maintenance',
+    'distractor',
+    'post_distractor_fixation',
+    'probe',
+  ]);
 
   // ── Draw helpers ───────────────────────────────────────────────
 
@@ -861,15 +1014,34 @@
     // Preload images (non-blocking)
     preloadImages();
 
-    // Listen for gaze events
+    // Listen for gaze events. Sampling happens HERE (driven by real camera
+    // frames at ~30 Hz) rather than in the RAF render loop, so the pupil /
+    // gaze time series is not resampled to display refresh rate or throttled
+    // when the tab loses focus.
     unlistenGaze = await listen('gaze_frame', (event) => {
       const { x, y, pupil, valid } = event.payload;
       currentGaze = { x, y, pupil, valid };
+
+      // Only sample while a trial is active and in a sampling-whitelisted phase.
+      if (trialNum === 0 || !GAZE_SAMPLING_PHASES.has(taskPhase)) return;
+
+      // Invalid frames (or NaN coords) still push NaN placeholders so the
+      // time axis stays aligned; downstream feature extraction skips NaN.
+      if (valid && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(pupil)) {
+        pupilSeries.push(pupil);
+        gazeXSeries.push(x);
+        gazeYSeries.push(y);
+      } else {
+        pupilSeries.push(NaN);
+        gazeXSeries.push(NaN);
+        gazeYSeries.push(NaN);
+      }
     });
 
     // Key handler
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', handleResize);
+    canvas.addEventListener('click', handleCanvasClick);
 
     // Start intro
     enterPhase('intro');
@@ -881,6 +1053,7 @@
     if (unlistenGaze) unlistenGaze();
     window.removeEventListener('keydown', handleKeyDown);
     window.removeEventListener('resize', handleResize);
+    if (canvas) canvas.removeEventListener('click', handleCanvasClick);
   });
 
   function handleResize() {
@@ -896,6 +1069,7 @@
 <canvas
   bind:this={canvas}
   class="sternberg-canvas"
+  class:show-cursor={showExitConfirm}
 ></canvas>
 
 <style>
@@ -904,5 +1078,8 @@
     width: 100vw;
     height: 100vh;
     cursor: none;
+  }
+  .sternberg-canvas.show-cursor {
+    cursor: pointer;
   }
 </style>

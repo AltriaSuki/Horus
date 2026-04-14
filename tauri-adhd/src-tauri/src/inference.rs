@@ -83,7 +83,12 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     let accuracy = mean(&performs);
     let omission_rate = omission_count as f64 / n_trials.max(1) as f64;
 
-    // RT difference correct vs incorrect
+    // RT difference correct vs incorrect.
+    // Training pipeline (adhd_classifier.py:235-237) returns 0.0 when either
+    // group is empty (NaN guard). The earlier engine/adhd_engine/worker/inference.py
+    // incorrectly defaulted each group to 0.0 separately, leaking `-rt_correct`
+    // or `+rt_incorrect` into the feature. We match the training semantics here
+    // because rf_model.json was trained on features produced by adhd_classifier.py.
     let mut rt_correct = Vec::new();
     let mut rt_incorrect = Vec::new();
     for t in trials {
@@ -93,7 +98,11 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
             else { rt_incorrect.push(rt_ms); }
         }
     }
-    let rt_diff_ci = mean(&rt_incorrect) - mean(&rt_correct);
+    let rt_diff_ci = if rt_correct.is_empty() || rt_incorrect.is_empty() {
+        0.0
+    } else {
+        mean(&rt_incorrect) - mean(&rt_correct)
+    };
 
     // ── Pupil features (11) ──────────────────────────────────────
     struct PupilFeats {
@@ -400,13 +409,16 @@ pub struct BlockStats {
     pub omission_rate: f64,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AdhdReport {
     pub prediction: String,
     pub adhd_probability: f64,
     pub control_probability: f64,
     pub risk_level: String,
     pub feature_values: HashMap<String, f64>,
+    /// Split-count approximation of feature importance (fraction of
+    /// decision nodes across all trees that test each feature). Not true
+    /// Gini importance — see `RfModelBundle::predict` for details.
     pub feature_importance: HashMap<String, f64>,
     pub model_info: String,
     /// 6-dimension attention radar profile
@@ -498,12 +510,24 @@ impl RfModelBundle {
             else if adhd_prob >= 0.3 { "LOW" }
             else { "MINIMAL" };
 
-        // Feature importance (from the first tree's feature importances
-        // — simplified; in sklearn it's the Gini importance weighted across
-        // all trees, but for display purposes this is good enough)
+        // Feature importance — SPLIT-COUNT APPROXIMATION, not true Gini.
+        //
+        // The exported rf_model.json does not carry sklearn's
+        // `feature_importances_` vector nor the per-node impurity /
+        // weighted_n_node_samples fields needed to reconstruct Gini
+        // importance. As a stand-in we report, for each feature, the
+        // fraction of decision splits across all trees that tested that
+        // feature. This is correlated with Gini importance but ignores
+        // per-split information gain and sample weighting — downstream UI
+        // should treat it as a rough ranking signal only.
+        //
+        // If we ever re-export the model with `tree.impurity` and
+        // `tree.weighted_n_node_samples` included, swap this loop for the
+        // standard Gini formula:
+        //   sum over nodes of  w_node * (impurity - w_left/w * imp_left
+        //                                - w_right/w * imp_right)
+        // then normalise per-tree and average across the forest.
         let mut feature_importance = HashMap::new();
-        // Use a simple approximation: count how often each feature appears
-        // at decision nodes across all trees
         let mut counts = vec![0u32; self.features.selected_features.len()];
         for tree in &self.trees {
             for &f in &tree.feature {
@@ -582,27 +606,36 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     // Regenerate via scripts/calibrate_attention_sigmoid.py.
 
     // 1. Sustained attention — 持续注意力
-    //    Low rt_skewness + small pupil late-minus-early = good sustained attention
-    //    (ADHD kids have high skewness from long-tail slow RTs as they lose focus)
+    //    On this cohort Control shows HIGHER rt_skewness (0.6525 vs 0.4338)
+    //    and HIGHER pupil_late_minus_early (1.557 vs 1.430) than ADHD. We
+    //    therefore treat high values as the healthy direction: a positive
+    //    rt_skewness reflects the typical long-tail RT distribution healthy
+    //    subjects show on this task, and a positive late-minus-early pupil
+    //    response reflects ongoing engagement through the trial.
     let sustained = {
         let skew = get("rt_skewness");
         let late_early = get("pupil_late_minus_early");
-        // Both should be LOW for good sustained attention → invert
-        // rt_skewness: ctrl_p50=0.6525 adhd_p50=0.4338
-        let s1 = sigmoid_map(skew, 0.543158, 12.6765, true);
-        // pupil_late_minus_early: ctrl_p50=1.557 adhd_p50=1.430
-        let s2 = sigmoid_map(late_early, 1.49344, 21.8408, true);
+        // rt_skewness: ctrl_p50=0.6525 adhd_p50=0.4338 → high = healthy
+        let s1 = sigmoid_map(skew, 0.543158, 12.6765, false);
+        // pupil_late_minus_early: ctrl_p50=1.557 adhd_p50=1.430 → high = healthy
+        let s2 = sigmoid_map(late_early, 1.49344, 21.8408, false);
         (s1 + s2) / 2.0
     };
 
     // 2. Cognitive load sensitivity — 认知负荷敏感度
-    //    Small rt_load_diff + small pupil_load_diff = good (can handle both loads)
+    //    Data split on this cohort:
+    //    • |rt_load_diff|  ctrl_p50=57.25 > adhd_p50=39.62  → high = healthy.
+    //      A robust RT slowdown under higher load reflects appropriate
+    //      cognitive recruitment; ADHD subjects show a flatter RT response.
+    //    • |pupil_load_diff| ctrl_p50=0.170 < adhd_p50=0.286 → high = ADHD.
+    //      ADHD subjects over-recruit pupil dilation as load increases.
+    //    The score is the mean of the two sigmoids.
     let cog_load = {
         let rt_diff = get("rt_load_diff").abs();
         let pupil_diff = get("pupil_load_diff").abs();
-        // rt_load_diff (abs): ctrl_p50=57.25 adhd_p50=39.62
-        let s1 = sigmoid_map(rt_diff, 48.4324, 0.157245, true);
-        // pupil_load_diff (abs): ctrl_p50=0.1703 adhd_p50=0.2862
+        // |rt_load_diff|: high = healthy
+        let s1 = sigmoid_map(rt_diff, 48.4324, 0.157245, false);
+        // |pupil_load_diff|: high = ADHD → invert
         let s2 = sigmoid_map(pupil_diff, 0.228262, 23.9182, true);
         (s1 + s2) / 2.0
     };
@@ -628,26 +661,38 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     };
 
     // 5. Pupil engagement — 瞳孔活跃度 (认知投入)
-    //    High pupil_max_peak + positive slope = actively engaged
+    //    On this cohort the two pupil amplitudes point in opposite directions:
+    //    • pupil_max_peak  ctrl_p50=8.04 < adhd_p50=10.34 → spiky peaks are
+    //      an ADHD pattern (short reactive bursts rather than sustained
+    //      arousal), so high = ADHD → invert.
+    //    • pupil_auc       ctrl_p50=0.477 > adhd_p50=0.245 → a larger area
+    //      under the pupil response curve reflects sustained engagement,
+    //      so high = healthy (no invert).
+    //    Average of the two sigmoids.
     let engagement = {
         let peak = get("pupil_max_peak");
         let _slope = get("pupil_slope");
         let auc = get("pupil_auc");
-        // pupil_max_peak: ctrl_p50=8.042 adhd_p50=10.34
-        let s1 = sigmoid_map(peak, 9.19291, 1.2043, false);
-        // pupil_auc: ctrl_p50=0.4769 adhd_p50=0.245
+        // pupil_max_peak: high = ADHD → invert
+        let s1 = sigmoid_map(peak, 9.19291, 1.2043, true);
+        // pupil_auc: high = healthy
         let s2 = sigmoid_map(auc, 0.360924, 11.9559, false);
         (s1 + s2) / 2.0
     };
 
     // 6. Gaze control — 注视控制
-    //    Low gaze_var_x + low path = controlled eye movements
+    //    • gaze_var_x          ctrl_p50=6871 > adhd_p50=6074 → surprisingly,
+    //      healthy subjects spread their gaze more horizontally while
+    //      scanning the stimuli; ADHD subjects over-fixate. High = healthy.
+    //    • gaze_path_normalized ctrl_p50=0.884 < adhd_p50=1.108 → longer
+    //      normalised scan path reflects restless eye movements, so
+    //      high = ADHD → invert.
     let gaze_ctrl = {
         let var_x = get("gaze_var_x");
         let path = get("gaze_path_normalized");
-        // gaze_var_x: ctrl_p50=6871 adhd_p50=6074
-        let s1 = sigmoid_map(var_x, 6472.62, 0.00348039, true);
-        // gaze_path_normalized: ctrl_p50=0.8837 adhd_p50=1.108
+        // gaze_var_x: high = healthy
+        let s1 = sigmoid_map(var_x, 6472.62, 0.00348039, false);
+        // gaze_path_normalized: high = ADHD → invert
         let s2 = sigmoid_map(path, 0.995881, 12.3587, true);
         (s1 + s2) / 2.0
     };
@@ -744,14 +789,18 @@ fn std_dev(v: &[f64]) -> f64 {
 }
 
 fn skewness(v: &[f64]) -> f64 {
+    // Training pipeline (adhd_classifier.py:227 and engine/.../inference.py:81)
+    // calls `scipy.stats.skew(..., bias=True)` (scipy's default) which returns
+    // the biased sample skewness g1 = m3 / m2^(3/2) *without* the
+    // sqrt(n(n-1))/(n-2) adjustment. We must match that exactly so the
+    // rt_skewness feature value aligns with what the StandardScaler was fit on.
     if v.len() < 3 { return 0.0; }
     let n = v.len() as f64;
     let m = mean(v);
     let m2: f64 = v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / n;
     if m2 <= 0.0 { return 0.0; }
     let m3: f64 = v.iter().map(|x| (x - m).powi(3)).sum::<f64>() / n;
-    let g1 = m3 / m2.powf(1.5);
-    (n * (n - 1.0)).sqrt() / (n - 2.0) * g1
+    m3 / m2.powf(1.5)
 }
 
 /// Simple linear regression slope: y = slope * x + intercept

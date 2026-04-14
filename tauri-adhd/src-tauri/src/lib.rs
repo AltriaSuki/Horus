@@ -47,6 +47,7 @@ pub fn run() {
             commands::finish_calibration,
             commands::submit_trial_result,
             commands::finish_screening,
+            commands::cancel_screening,
             commands::launch_game,
             commands::stop_game,
             commands::run_inference,

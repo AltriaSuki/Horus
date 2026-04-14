@@ -37,7 +37,11 @@
     try {
       resetSession();
 
-      const session = await invoke('start_screening', { subjectId: selectedSubjectId });
+      const session = await invoke('start_screening', {
+        subjectId: selectedSubjectId,
+        screenWidth: window.innerWidth,
+        screenHeight: window.innerHeight,
+      });
       const subject = subjects.find((s) => s.id === selectedSubjectId);
 
       currentSession.set(session);
@@ -46,7 +50,8 @@
 
       goto('/screening/running');
     } catch (e) {
-      error = '启动筛查失败: ' + e;
+      const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
+      error = '启动筛查失败: ' + msg;
       console.error(e);
     } finally {
       loading = false;
@@ -194,6 +199,11 @@
     border: 3px solid rgba(255, 255, 255, 0.6);
     padding: var(--space-md) var(--space-lg);
     box-shadow: var(--shadow-sm);
+    transition: transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.4s;
+  }
+  .step:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: var(--shadow-md);
   }
   .step-badge {
     width: 40px;

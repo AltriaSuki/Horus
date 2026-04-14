@@ -2,12 +2,11 @@
 //!
 //! Each `#[tauri::command]` function is callable from JS via `invoke('name', {...})`.
 
-use crate::{camera, gaze_math, inference, pipeline, storage};
+use crate::{camera, inference, pipeline, storage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 
 // ═══════════════════════════════════════════════════════════════════
 // Global session state — shared between commands
@@ -16,14 +15,17 @@ use tauri::{AppHandle, Emitter, Manager};
 struct SessionState {
     /// Calibration samples: (8D features, screen_x, screen_y)
     calibration_samples: Vec<([f64; 8], [f64; 2])>,
-    /// Accumulated trial results for the current session
-    trial_results: Vec<inference::TrialResult>,
     /// The gaze pipeline (camera + face mesh + AFFNet + Ridge)
     pipeline: Option<pipeline::GazePipeline>,
     /// Camera capture thread handle
     camera: Option<camera::CameraCapture>,
     /// Whether the gaze streaming loop is running
     streaming: bool,
+    /// Handle of the background gaze-stream thread; joined on session end.
+    gaze_thread: Option<std::thread::JoinHandle<()>>,
+    /// ID of the currently active screening session (for incremental
+    /// trial persistence). Set in start_screening, cleared in finish/cancel.
+    current_session_id: Option<String>,
     /// Models directory path
     models_dir: PathBuf,
 }
@@ -32,13 +34,27 @@ static SESSION: once_cell::sync::Lazy<Mutex<SessionState>> =
     once_cell::sync::Lazy::new(|| {
         Mutex::new(SessionState {
             calibration_samples: Vec::new(),
-            trial_results: Vec::new(),
             pipeline: None,
             camera: None,
             streaming: false,
+            gaze_thread: None,
+            current_session_id: None,
             models_dir: PathBuf::from("../models"),
         })
     });
+
+/// Signal streaming loop to stop and join its thread (if any). Must be
+/// called with SESSION unlocked, because the loop acquires the lock.
+fn shutdown_gaze_thread() {
+    let handle = {
+        let mut state = SESSION.lock();
+        state.streaming = false;
+        state.gaze_thread.take()
+    };
+    if let Some(h) = handle {
+        let _ = h.join();
+    }
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // Commands
@@ -64,17 +80,40 @@ pub fn list_subjects() -> Result<Vec<storage::Subject>, String> {
 }
 
 #[tauri::command]
-pub fn start_screening(subject_id: String, app: AppHandle) -> Result<storage::SessionRow, String> {
+pub fn start_screening(
+    subject_id: String,
+    screen_width: u32,
+    screen_height: u32,
+    app: AppHandle,
+) -> Result<storage::SessionRow, String> {
+    // 若之前的 session 线程还在跑（异常路径或重复调用），先优雅停止
+    shutdown_gaze_thread();
+
     let session_id = uuid::Uuid::new_v4().to_string();
     let session = storage::create_session(&session_id, &subject_id, "screening", "sternberg")
         .map_err(|e| e.to_string())?;
 
-    // Reset session state
+    // 初始化阶段出错时用于统一走失败分支：标记 DB + 清空 state
+    let fail = |msg: String| -> Result<storage::SessionRow, String> {
+        {
+            let mut state = SESSION.lock();
+            state.pipeline = None;
+            state.camera = None;
+            state.current_session_id = None;
+        }
+        // best-effort：二次错误只记日志，不掩盖原始 msg
+        if let Err(e) = storage::mark_session_failed(&session_id, &msg) {
+            log::warn!("mark_session_failed 失败: {}", e);
+        }
+        Err(msg)
+    };
+
+    // Reset session state + 分配资源
     {
         let mut state = SESSION.lock();
         state.calibration_samples.clear();
-        state.trial_results.clear();
         state.streaming = false;
+        state.current_session_id = Some(session_id.clone());
 
         // Resolve models directory relative to the executable
         // In dev mode: src-tauri/ is cwd, ../models/ works
@@ -101,44 +140,67 @@ pub fn start_screening(subject_id: String, app: AppHandle) -> Result<storage::Se
             }
         }
 
-        // Initialize the gaze pipeline
-        match pipeline::GazePipeline::new(&state.models_dir, 1920, 1080) {
+        // Pipeline 初始化失败直接中止：没有 pipeline 则 gaze_frame 永远出不来
+        match pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height) {
             Ok(p) => {
                 state.pipeline = Some(p);
-                log::info!("Gaze pipeline initialized");
+                log::info!("Gaze pipeline initialized ({}x{})", screen_width, screen_height);
             }
             Err(e) => {
-                log::warn!("Gaze pipeline init failed (will run without live gaze): {}", e);
-                // Continue without pipeline — calibration and task can still work
-                // with the frontend collecting data through the Canvas
+                drop(state);
+                return fail(format!(
+                    "Gaze pipeline 初始化失败: {}. 请确认模型文件和摄像头可用",
+                    e
+                ));
             }
         }
 
-        // Start camera capture
+        // 摄像头同样不可缺少
         match camera::CameraCapture::start_with(0, 640, 480, 30) {
             Ok(cam) => {
                 state.camera = Some(cam);
                 log::info!("Camera started");
             }
             Err(e) => {
-                log::warn!("Camera init failed: {}", e);
+                drop(state);
+                return fail(format!(
+                    "摄像头初始化失败: {}. 请检查摄像头权限或设备是否被占用",
+                    e
+                ));
             }
         }
     }
 
     // Start gaze streaming in a background thread
     let app_clone = app.clone();
-    std::thread::Builder::new()
+    let handle = match std::thread::Builder::new()
         .name("gaze-stream".into())
         .spawn(move || {
             stream_gaze_loop(app_clone);
-        })
-        .map_err(|e| format!("Failed to start gaze stream: {}", e))?;
+        }) {
+        Ok(h) => h,
+        Err(e) => {
+            return fail(format!("启动 gaze 流线程失败: {}", e));
+        }
+    };
+
+    {
+        let mut state = SESSION.lock();
+        state.gaze_thread = Some(handle);
+    }
+
+    // 一切就绪：把 session 标记为 running
+    if let Err(e) = storage::mark_session_running(&session_id) {
+        log::warn!("mark_session_running 失败: {}", e);
+    }
 
     Ok(session)
 }
 
 /// Background thread: reads camera frames, runs pipeline, emits gaze events.
+///
+/// Precondition: 调用者已保证 `state.pipeline` 初始化成功；只有在 finish/cancel
+/// 主动清空 pipeline 时才会观察到 None，此时直接退出循环。
 fn stream_gaze_loop(app: AppHandle) {
     {
         let mut state = SESSION.lock();
@@ -157,8 +219,6 @@ fn stream_gaze_loop(app: AppHandle) {
             }
         }
 
-        // Try to get a camera frame and process it
-        // Get the latest camera frame, then process it through the pipeline.
         // Two separate lock scopes to avoid borrow conflict (camera is &,
         // pipeline is &mut, both behind the same Mutex).
         let frame_data = {
@@ -166,19 +226,21 @@ fn stream_gaze_loop(app: AppHandle) {
             state.camera.as_ref().and_then(|cam| cam.latest_frame())
         };
 
-        let frame_result = if let Some(cf) = frame_data {
+        let gaze_frame = if let Some(cf) = frame_data {
             let mut state = SESSION.lock();
-            if let Some(pipe) = &mut state.pipeline {
-                let t = start.elapsed().as_secs_f64();
-                Some(pipe.process_frame(&cf.rgb, cf.width, cf.height, t))
-            } else {
-                None
+            match state.pipeline.as_mut() {
+                Some(pipe) => {
+                    let t = start.elapsed().as_secs_f64();
+                    Some(pipe.process_frame(&cf.rgb, cf.width, cf.height, t))
+                }
+                // pipeline 被清掉 → session 已结束，退出循环
+                None => break,
             }
         } else {
             None
         };
 
-        if let Some(gf) = frame_result {
+        if let Some(gf) = gaze_frame {
             // Emit gaze_frame event to frontend
             let _ = app.emit("gaze_frame", &gf);
         }
@@ -191,8 +253,8 @@ fn stream_gaze_loop(app: AppHandle) {
 }
 
 #[tauri::command]
-pub fn get_session(_session_id: String) -> Result<Option<storage::SessionRow>, String> {
-    Ok(None) // TODO: implement session lookup
+pub fn get_session(session_id: String) -> Result<Option<storage::SessionRow>, String> {
+    storage::get_session(&session_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -206,24 +268,23 @@ pub fn list_subject_sessions(subject_id: String) -> Result<Vec<storage::SessionR
 }
 
 /// Called by the Svelte frontend once per calibration point click.
+/// 后端从 pipeline 拉取当前最新的 8D 虹膜特征，避免前端传入坐标空间错位的数据。
 #[tauri::command]
 pub fn submit_calibration_sample(
-    features: Vec<f64>,
     screen_x: f64,
     screen_y: f64,
 ) -> Result<(), String> {
     let mut state = SESSION.lock();
 
-    // Convert features vec to [f64; 8]
-    let mut feat = [0.0f64; 8];
-    for (i, &v) in features.iter().take(8).enumerate() {
-        feat[i] = v;
-    }
+    let feat = match state.pipeline.as_ref().and_then(|p| p.latest_feature()) {
+        Some(f) => f,
+        None => return Err("未检测到人脸，请调整位置".into()),
+    };
 
     state.calibration_samples.push((feat, [screen_x, screen_y]));
     log::info!(
-        "Calibration sample {}: screen=({:.0}, {:.0})",
-        state.calibration_samples.len(), screen_x, screen_y
+        "Calibration sample {}: screen=({:.0}, {:.0}) feat=[{:.3}, {:.3}, ...]",
+        state.calibration_samples.len(), screen_x, screen_y, feat[0], feat[1]
     );
     Ok(())
 }
@@ -252,15 +313,28 @@ pub fn finish_calibration() -> Result<f64, String> {
 }
 
 /// Called by the Svelte frontend after each Sternberg trial completes.
+/// 做增量持久化（逐 trial 落盘），崩溃时也能保住已完成的数据。
 #[tauri::command]
 pub fn submit_trial_result(trial: inference::TrialResult) -> Result<(), String> {
-    let mut state = SESSION.lock();
     log::info!(
         "Trial {} complete: correct={}, rt={:.3}",
         trial.trial_num, trial.correct, trial.reaction_time
     );
-    state.trial_results.push(trial);
-    Ok(())
+
+    let sid = {
+        let state = SESSION.lock();
+        state.current_session_id.clone()
+    };
+
+    match sid {
+        Some(id) => storage::save_trial(&id, &trial)
+            .map_err(|e| format!("保存 trial 失败: {}", e)),
+        // 没有活跃 session 则只记日志，不算错误（兼容离线测试）
+        None => {
+            log::warn!("submit_trial_result 调用时无活跃 session，跳过持久化");
+            Ok(())
+        }
+    }
 }
 
 /// Called when all 160 trials are done. Runs feature extraction + RF prediction.
@@ -269,18 +343,20 @@ pub fn finish_screening(
     session_id: String,
     trials: Vec<inference::TrialResult>,
 ) -> Result<inference::AdhdReport, String> {
-    // Stop the gaze streaming
+    // 先停 gaze 线程，再释放 camera / pipeline
+    shutdown_gaze_thread();
     {
         let mut state = SESSION.lock();
-        state.streaming = false;
-        // Drop camera + pipeline to free resources
         state.camera = None;
         state.pipeline = None;
+        state.current_session_id = None;
     }
 
     let fps = 30.0;
 
-    // Use the trials passed from frontend (they have the gaze/pupil data)
+    // Use the trials passed from frontend (they have the gaze/pupil data).
+    // 前端的 SternbergCanvas 一直持有 160 条完整 trial 数据直到 finish，
+    // 所以这里用参数，而不是后端 state（旧的 state.trial_results 已删除）。
     let features = inference::extract_features(&trials, fps);
     log::info!("Extracted {} features", features.len());
 
@@ -310,11 +386,28 @@ pub fn finish_screening(
         report.prediction, report.adhd_probability, report.risk_level
     );
 
-    // Persist to SQLite
+    // Persist to SQLite (save_report 内部会把 session 状态置为 completed)
     storage::save_report(&session_id, &report)
         .map_err(|e| format!("Failed to save report: {}", e))?;
 
     Ok(report)
+}
+
+/// 用户中途放弃。停 gaze 线程、释放摄像头/pipeline、把 DB session 标记为 cancelled。
+#[tauri::command]
+pub fn cancel_screening(session_id: String) -> Result<(), String> {
+    shutdown_gaze_thread();
+    {
+        let mut state = SESSION.lock();
+        state.camera = None;
+        state.pipeline = None;
+        state.calibration_samples.clear();
+        state.current_session_id = None;
+    }
+    storage::mark_session_cancelled(&session_id)
+        .map_err(|e| format!("标记 session 取消失败: {}", e))?;
+    log::info!("Session {} cancelled", session_id);
+    Ok(())
 }
 
 /// Launch the Unity game as a subprocess.
@@ -323,8 +416,10 @@ pub fn launch_game(game_path: String) -> Result<u32, String> {
     use crate::game::GameManager;
     match GameManager::launch(&game_path) {
         Ok(gm) => {
-            log::info!("Game launched");
-            Ok(0u32) // TODO: store GameManager, return real pid
+            let pid = gm.pid().unwrap_or(0);
+            log::info!("Game launched (pid={})", pid);
+            // TODO: 存 GameManager 到全局 state，以便 stop_game 调用 .stop()
+            Ok(pid)
         }
         Err(e) => Err(format!("Failed to launch game: {}", e)),
     }
@@ -332,7 +427,9 @@ pub fn launch_game(game_path: String) -> Result<u32, String> {
 
 #[tauri::command]
 pub fn stop_game() -> Result<(), String> {
-    // TODO: stop the game subprocess
+    // TODO: 未实现 — launch_game 目前没把 GameManager 保存到 state，
+    // 所以这里没有句柄可 .stop()。需先把 GameManager 放入 SESSION（或独立
+    // 的 GAME 静态变量）后再接线。
     Ok(())
 }
 

@@ -25,7 +25,24 @@
   let currentPointIndex = $state(0);
   let meanError = $state(null);
   let showResult = $state(false);
-  let gazeFeatures = [];
+  let errorBanner = $state(null);
+  let errorBannerTimer = null;
+  // Flag set on unmount / ESC. All async continuations check this before
+  // touching state, so we can't race into `mode = 'validating'` or fire
+  // `onDone` after the parent has already navigated away.
+  let isDestroyed = false;
+  // Pending timers scheduled by validation flow — cleared on destroy / retry.
+  let pendingTimers = [];
+  let doneTimer = null;
+  let postCalibTimer = null;
+
+  // Live gaze prediction (x, y in screen pixels) — updated by gaze_frame events
+  let lastGaze = { x: null, y: null, ts: 0 };
+
+  // Validation error collection
+  let validationErrors = [];
+  let validationBuffer = [];
+  let validationCollecting = false;
 
   // 13 calibration points — EXACTLY matching Python's CALI_GRID
   const calibrationPoints = [
@@ -68,8 +85,11 @@
     startTime = performance.now();
 
     unlistenGaze = await listen('gaze_frame', (event) => {
-      const { x, y, pupil } = event.payload;
-      gazeFeatures = [x, y, pupil, 0, 0, 0, 0, 0];
+      const { x, y } = event.payload;
+      lastGaze = { x, y, ts: performance.now() };
+      if (validationCollecting && Number.isFinite(x) && Number.isFinite(y)) {
+        validationBuffer.push([x, y]);
+      }
     });
 
     canvas.addEventListener('click', handleClick);
@@ -80,8 +100,14 @@
   });
 
   onDestroy(() => {
+    isDestroyed = true;
     if (animFrameId) cancelAnimationFrame(animFrameId);
     if (unlistenGaze) unlistenGaze();
+    if (errorBannerTimer) clearTimeout(errorBannerTimer);
+    if (doneTimer) clearTimeout(doneTimer);
+    if (postCalibTimer) clearTimeout(postCalibTimer);
+    for (const t of pendingTimers) clearTimeout(t);
+    pendingTimers = [];
     if (canvas) canvas.removeEventListener('click', handleClick);
     window.removeEventListener('resize', resizeCanvas);
     window.removeEventListener('keydown', handleKey);
@@ -102,12 +128,22 @@
 
   function handleKey(e) {
     if (e.key === 'Escape') {
+      // Mark destroyed *before* calling back to kill any in-flight
+      // finish_calibration / finalizeValidation continuations that would
+      // otherwise flip mode='validating' or fire onDone after the parent
+      // navigated away.
+      isDestroyed = true;
+      for (const t of pendingTimers) clearTimeout(t);
+      pendingTimers = [];
+      if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
+      if (postCalibTimer) { clearTimeout(postCalibTimer); postCalibTimer = null; }
       if (onCancel) onCancel();
     }
   }
 
   async function handleClick(e) {
     if (mode !== 'calibrating' || !currentPoint || showResult) return;
+    if (isDestroyed) return;
 
     // Get click position in CSS pixels
     const rect = canvas.getBoundingClientRect();
@@ -124,48 +160,136 @@
 
     try {
       await invoke('submit_calibration_sample', {
-        features: gazeFeatures.length >= 8 ? gazeFeatures : [0,0,0,0,0,0,0,0],
         screenX: targetX,
         screenY: targetY,
       });
+      if (isDestroyed) return;
       recordCalibrationPoint();
     } catch (err) {
-      console.error('Calibration sample error:', err);
+      if (isDestroyed) return;
+      const msg = typeof err === 'string' ? err : (err?.message ?? String(err));
+      console.error('Calibration sample error:', msg);
+      showErrorBanner(msg.includes('人脸') ? '未检测到人脸，请调整位置' : msg);
+      return; // do not advance; user retries this point
     }
 
     currentPointIndex++;
 
     if (currentPointIndex >= calibrationPoints.length) {
       try {
-        const err = await invoke('finish_calibration');
-        meanError = err;
+        await invoke('finish_calibration');
       } catch (err) {
-        console.error('Finish calibration error:', err);
-        meanError = -1;
+        if (isDestroyed) return;
+        const msg = typeof err === 'string' ? err : (err?.message ?? String(err));
+        console.error('Finish calibration error:', msg);
+        showErrorBanner(msg);
       }
+      if (isDestroyed) return;
+      // Briefly show "校准完成，进入验证" then run validation to get real error.
       showResult = true;
-      setTimeout(() => {
+      postCalibTimer = setTimeout(() => {
+        postCalibTimer = null;
+        if (isDestroyed) return;
         showResult = false;
         mode = 'validating';
         currentPointIndex = 0;
         startValidation();
-      }, 2000);
+      }, 1500);
     }
   }
 
+  function showErrorBanner(text) {
+    errorBanner = text;
+    if (errorBannerTimer) clearTimeout(errorBannerTimer);
+    errorBannerTimer = setTimeout(() => { errorBanner = null; }, 3000);
+  }
+
   function startValidation() {
+    if (isDestroyed) return;
+    validationErrors = [];
     let idx = 0;
     function showNext() {
+      if (isDestroyed) return;
       if (idx >= validationPoints.length) {
-        mode = 'done';
-        setTimeout(() => { if (onDone) onDone(); }, 500);
+        finalizeValidation();
         return;
       }
       currentPointIndex = idx;
-      idx++;
-      setTimeout(showNext, 1500);
+      const pt = validationPoints[idx];
+      const targetX = pt.x * cssWidth;
+      const targetY = pt.y * cssHeight;
+
+      validationBuffer = [];
+      validationCollecting = false;
+
+      // First 1000ms: let the eyes settle. Last 500ms: collect gaze samples.
+      const t1 = setTimeout(() => {
+        if (isDestroyed) return;
+        validationBuffer = [];
+        validationCollecting = true;
+      }, 1000);
+      pendingTimers.push(t1);
+      const t2 = setTimeout(() => {
+        if (isDestroyed) return;
+        validationCollecting = false;
+        if (validationBuffer.length < 5) {
+          validationErrors.push(NaN);
+        } else {
+          let sx = 0, sy = 0;
+          for (const [gx, gy] of validationBuffer) { sx += gx; sy += gy; }
+          const avgX = sx / validationBuffer.length;
+          const avgY = sy / validationBuffer.length;
+          validationErrors.push(Math.hypot(avgX - targetX, avgY - targetY));
+        }
+        idx++;
+        showNext();
+      }, 1500);
+      pendingTimers.push(t2);
     }
     showNext();
+  }
+
+  function finalizeValidation() {
+    if (isDestroyed) return;
+    const valid = validationErrors.filter((e) => Number.isFinite(e));
+    if (valid.length < 2) {
+      meanError = -1;
+      showErrorBanner('校准质量不足，建议重做');
+    } else {
+      meanError = valid.reduce((a, b) => a + b, 0) / valid.length;
+    }
+    mode = 'done';
+    showResult = true;
+
+    // Bug B: do NOT auto-advance when calibration actually failed.
+    // Previously the UI pretended the result was good ("校准结果已获取")
+    // and we fired onDone regardless — the parent then forced the user
+    // into Sternberg with a garbage eye-tracking model. Now: on failure
+    // we stop here and let the user click "重新校准" or "退出".
+    if (meanError !== null && meanError >= 0) {
+      doneTimer = setTimeout(() => {
+        doneTimer = null;
+        if (isDestroyed) return;
+        if (onDone) onDone();
+      }, 1500);
+    }
+  }
+
+  /** Retry calibration after a failed validation.
+   * Backend does not expose reset_calibration yet, so recording another
+   * 13 points on top of the existing calibrator state would compound the
+   * problem. Safest option: bail out via onCancel so the parent tears
+   * down the session and routes the user back to the start screen — they
+   * click "开始闯关" again and get a clean start_screening call (which
+   * resets SESSION on the backend, per commands.rs:71-78). */
+  function retryCalibration() {
+    if (isDestroyed) return;
+    isDestroyed = true;
+    if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
+    if (postCalibTimer) { clearTimeout(postCalibTimer); postCalibTimer = null; }
+    for (const t of pendingTimers) clearTimeout(t);
+    pendingTimers = [];
+    if (onCancel) onCancel();
   }
 
   function render() {
@@ -217,28 +341,60 @@
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
-    if (showResult) {
+    if (mode === 'done' && showResult) {
+      const failed = !(meanError != null && meanError >= 0);
+      if (failed) {
+        // Honest failure screen — do NOT pretend it worked.
+        ctx.fillStyle = '#E94F4F';
+        ctx.font = '800 34px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText('校准失败，请重做', w / 2, h / 2 - 50);
+        ctx.fillStyle = '#FFF8F0';
+        ctx.font = '500 18px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText('验证阶段未能稳定采集到注视数据', w / 2, h / 2 - 10);
+        ctx.fillStyle = 'rgba(255,248,240,0.6)';
+        ctx.font = '400 15px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText('请点击下方按钮重新校准，或按 ESC 退出', w / 2, h / 2 + 20);
+      } else {
+        ctx.fillStyle = '#FFF8F0';
+        ctx.font = '700 32px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText('校准与验证完成', w / 2, h / 2 - 40);
+        ctx.fillStyle = '#4ECDC4';
+        ctx.font = '500 22px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText(`平均误差: ${meanError.toFixed(1)} 像素`, w / 2, h / 2 + 10);
+        ctx.fillStyle = 'rgba(255,248,240,0.5)';
+        ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.fillText('即将开始闯关...', w / 2, h / 2 + 50);
+      }
+    } else if (showResult) {
       ctx.fillStyle = '#FFF8F0';
       ctx.font = '700 32px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.fillText('校准完成', w / 2, h / 2 - 40);
-      ctx.fillStyle = '#4ECDC4';
-      ctx.font = '500 22px "PingFang SC", "Microsoft YaHei", sans-serif';
-      const errorText = meanError >= 0
-        ? `平均误差: ${meanError.toFixed(1)} 像素`
-        : '校准结果已获取';
-      ctx.fillText(errorText, w / 2, h / 2 + 10);
+      ctx.fillText('校准完成', w / 2, h / 2 - 20);
       ctx.fillStyle = 'rgba(255,248,240,0.5)';
       ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.fillText('即将进入验证阶段...', w / 2, h / 2 + 50);
-    } else if (mode === 'done') {
-      ctx.fillStyle = '#FFF8F0';
-      ctx.font = '700 32px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.fillText('校准与验证完成', w / 2, h / 2 - 20);
-      ctx.fillStyle = '#4ECDC4';
-      ctx.font = '500 20px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.fillText('即将开始闯关...', w / 2, h / 2 + 30);
+      ctx.fillText('即将进入验证阶段...', w / 2, h / 2 + 30);
     } else if (currentPoint) {
       drawTarget(currentPoint.x * w, currentPoint.y * h, elapsed);
+    }
+
+    // ── Error banner (top center, red/orange) ──────────────────
+    if (errorBanner) {
+      const msg = errorBanner;
+      ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+      const tw = ctx.measureText(msg).width;
+      const ebW = Math.min(w - 60, tw + 40);
+      const ebH = 44;
+      const ebX = (w - ebW) / 2;
+      const ebY = 24;
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      roundRect(ctx, ebX, ebY + 2, ebW, ebH, 22);
+      ctx.fill();
+      ctx.fillStyle = '#E94F4F';
+      roundRect(ctx, ebX, ebY, ebW, ebH, 22);
+      ctx.fill();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(msg, w / 2, ebY + ebH / 2);
     }
 
     // ── Progress bar ────────────────────────────────────────────
@@ -327,10 +483,26 @@
   class="calibration-canvas"
 ></canvas>
 
+{#if mode === 'done' && showResult && !(meanError != null && meanError >= 0)}
+  <button
+    class="retry-btn"
+    onclick={retryCalibration}
+  >
+    重新校准
+  </button>
+{/if}
+
 <!-- Exit button — perfectly safe at the bottom right corner (no points map to this position) -->
 <button
   class="exit-btn"
-  onclick={() => { if (onCancel) onCancel(); }}
+  onclick={() => {
+    isDestroyed = true;
+    for (const t of pendingTimers) clearTimeout(t);
+    pendingTimers = [];
+    if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
+    if (postCalibTimer) { clearTimeout(postCalibTimer); postCalibTimer = null; }
+    if (onCancel) onCancel();
+  }}
 >
   退出 (ESC)
 </button>
@@ -367,5 +539,30 @@
     background: rgba(255, 140, 66, 0.3);
     color: #FFF8F0;
     border-color: #FF8C42;
+  }
+
+  .retry-btn {
+    position: fixed;
+    z-index: 1001;
+    left: 50%;
+    top: calc(50% + 90px);
+    transform: translateX(-50%);
+    background: #FF8C42;
+    color: #FFF8F0;
+    border: 2px solid rgba(255, 255, 255, 0.4);
+    border-radius: 28px;
+    padding: 14px 36px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    box-shadow: 0 8px 24px rgba(255, 140, 66, 0.4);
+    transition: transform 0.15s ease, box-shadow 0.2s ease;
+  }
+  .retry-btn:hover {
+    transform: translateX(-50%) translateY(-2px);
+    box-shadow: 0 12px 28px rgba(255, 140, 66, 0.5);
+  }
+  .retry-btn:active {
+    transform: translateX(-50%) translateY(0);
   }
 </style>

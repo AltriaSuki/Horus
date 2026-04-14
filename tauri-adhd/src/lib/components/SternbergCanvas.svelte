@@ -34,14 +34,14 @@
   // ═══════════════════════════════════════════════════════════════
   // Constants
   // ═══════════════════════════════════════════════════════════════
-  const ENCODING_ITEMS = 3;          // memory set size (Sternberg load)
+  const NUM_ENCODING_ARRAYS = 3;     // three memory arrays per trial (Wainstein 2017)
   const ENCODING_DOT_MS = 750;
   const ENCODING_GAP_MS = 500;
   const FIXATION_MS = 500;
   const MAINTENANCE_MS = 500;
   const DISTRACTOR_MS = 500;
   const PROBE_MS = 1500;
-  const FEEDBACK_MS = 500;
+  const FEEDBACK_MS = 1500;
 
   // Distractor types: 3=neutral_image, 4=emotional_image, 5=gray_shape, 6=blank
   const DISTRACTOR_TYPES = [3, 4, 5, 6];
@@ -57,7 +57,7 @@
   let screenH = 0;
 
   // Task state
-  let taskPhase = 'intro';  // intro | fixation | encoding | encoding_gap | maintenance | distractor | probe | feedback | break | complete
+  let taskPhase = 'intro';  // intro | fixation | encoding | encoding_gap | maintenance | distractor | post_distractor_fixation | probe | feedback | break | complete
   let phaseStartTime = 0;
   let planCursor = 0;       // 0-based index into trialPlan (next trial to run)
   let trialNum = 0;         // 1-based global trial number (set by setupTrial)
@@ -65,8 +65,9 @@
   let trialInBlock = 0;     // 1-based trial within block
 
   // Current trial data
-  let encodingPositions = [];   // [{col, row}, ...] — the memory set
-  let currentEncodingIndex = 0; // which dot we're showing (0..2)
+  let encodingPositions = [];   // [{col, row}, ...] — full memory set (load*3 positions)
+  let currentEncodingIndex = 0; // which array we're showing (0..2)
+  let currentLoad = 1;          // dots per array for current trial
   let probePosition = null;     // {col, row}
   let probeIsTarget = false;    // true => probe was in memory set
   let distractorType = 0;       // 3-6
@@ -233,9 +234,10 @@
     trialInBlock = planEntry.trialInBlock;
     distractorType = planEntry.distractorType;
 
-    // Generate encoding positions (memory set)
+    // Generate encoding positions: load dots per array * 3 arrays = load*3 unique positions
     const load = planEntry.load;
-    encodingPositions = randomGridPositions(Math.max(load, ENCODING_ITEMS));
+    currentLoad = load;
+    encodingPositions = randomGridPositions(load * NUM_ENCODING_ARRAYS);
     currentEncodingIndex = 0;
 
     // Probe: 50% target (from memory set), 50% novel
@@ -301,7 +303,7 @@
       case 'encoding':
         if (elapsed >= ENCODING_DOT_MS) {
           currentEncodingIndex++;
-          if (currentEncodingIndex >= ENCODING_ITEMS) {
+          if (currentEncodingIndex >= NUM_ENCODING_ARRAYS) {
             enterPhase('maintenance');
           } else {
             enterPhase('encoding_gap');
@@ -323,6 +325,12 @@
 
       case 'distractor':
         if (elapsed >= DISTRACTOR_MS) {
+          enterPhase('post_distractor_fixation');
+        }
+        break;
+
+      case 'post_distractor_fixation':
+        if (elapsed >= FIXATION_MS) {
           enterPhase('probe');
           probeOnsetTime = performance.now();
         }
@@ -450,6 +458,7 @@
       case 'fixation':
       case 'encoding_gap':
       case 'maintenance':
+      case 'post_distractor_fixation':
         drawFixation(now);
         break;
       case 'encoding':
@@ -473,7 +482,7 @@
     }
 
     // Collect gaze data during active phases
-    if (['fixation', 'encoding', 'encoding_gap', 'maintenance', 'distractor', 'probe'].includes(taskPhase)) {
+    if (['fixation', 'encoding', 'encoding_gap', 'maintenance', 'distractor', 'post_distractor_fixation', 'probe'].includes(taskPhase)) {
       if (currentGaze.valid) {
         pupilSeries.push(currentGaze.pupil);
         gazeXSeries.push(currentGaze.x);
@@ -582,19 +591,19 @@
     drawBlackBg();
     drawFaintGrid();
 
-    // Draw the current encoding dot
-    if (currentEncodingIndex < encodingPositions.length) {
-      const pos = encodingPositions[currentEncodingIndex];
+    // Render all `load` dots for the current array (array index = currentEncodingIndex)
+    const dotRadius = cellW * 0.15;
+    const sliceStart = currentEncodingIndex * currentLoad;
+    const sliceEnd = sliceStart + currentLoad;
+    for (let i = sliceStart; i < sliceEnd && i < encodingPositions.length; i++) {
+      const pos = encodingPositions[i];
       const { x, y } = gridCellCenter(pos.col, pos.row);
-      const dotRadius = cellW * 0.28;
 
-      // White circle with anti-aliasing
       ctx.beginPath();
       ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
       ctx.fillStyle = '#FFFFFF';
       ctx.fill();
 
-      // Subtle outer ring
       ctx.beginPath();
       ctx.arc(x, y, dotRadius + 2, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
@@ -660,7 +669,7 @@
 
     if (probePosition) {
       const { x, y } = gridCellCenter(probePosition.col, probePosition.row);
-      const dotRadius = cellW * 0.28;
+      const dotRadius = cellW * 0.15;
 
       // Yellow probe dot
       ctx.beginPath();

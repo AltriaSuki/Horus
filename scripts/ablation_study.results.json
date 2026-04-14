@@ -1,0 +1,98 @@
+[
+  {
+    "name": "全 27 特征 (all)",
+    "n_features": 27,
+    "accuracy": 0.8,
+    "precision_adhd": 0.8214285714285714,
+    "recall_adhd": 0.8214285714285714,
+    "f1_adhd": 0.8214285714285714
+  },
+  {
+    "name": "选定 12 特征 (selected) - 线上模型",
+    "n_features": 12,
+    "accuracy": 0.84,
+    "precision_adhd": 0.8333333333333334,
+    "recall_adhd": 0.8928571428571429,
+    "f1_adhd": 0.8620689655172413
+  },
+  {
+    "name": "纯行为 7 特征 (behavioral)",
+    "n_features": 7,
+    "accuracy": 0.76,
+    "precision_adhd": 0.7857142857142857,
+    "recall_adhd": 0.7857142857142857,
+    "f1_adhd": 0.7857142857142857
+  },
+  {
+    "name": "纯瞳孔 11 特征 (pupil)",
+    "n_features": 11,
+    "accuracy": 0.66,
+    "precision_adhd": 0.6571428571428571,
+    "recall_adhd": 0.8214285714285714,
+    "f1_adhd": 0.7301587301587301
+  },
+  {
+    "name": "纯注视 3 特征 (gaze)",
+    "n_features": 3,
+    "accuracy": 0.66,
+    "precision_adhd": 0.6896551724137931,
+    "recall_adhd": 0.7142857142857143,
+    "f1_adhd": 0.7017543859649122
+  },
+  {
+    "name": "纯条件 6 特征 (condition)",
+    "n_features": 6,
+    "accuracy": 0.56,
+    "precision_adhd": 0.6153846153846154,
+    "recall_adhd": 0.5714285714285714,
+    "f1_adhd": 0.5925925925925926
+  },
+  {
+    "name": "行为 + 瞳孔 (18)",
+    "n_features": 18,
+    "accuracy": 0.78,
+    "precision_adhd": 0.7931034482758621,
+    "recall_adhd": 0.8214285714285714,
+    "f1_adhd": 0.8070175438596491
+  },
+  {
+    "name": "行为 + 注视 (10)",
+    "n_features": 10,
+    "accuracy": 0.78,
+    "precision_adhd": 0.84,
+    "recall_adhd": 0.75,
+    "f1_adhd": 0.7924528301886793
+  },
+  {
+    "name": "瞳孔 + 注视 (14)",
+    "n_features": 14,
+    "accuracy": 0.68,
+    "precision_adhd": 0.6875,
+    "recall_adhd": 0.7857142857142857,
+    "f1_adhd": 0.7333333333333333
+  },
+  {
+    "name": "行为 + 条件 (13)",
+    "n_features": 13,
+    "accuracy": 0.78,
+    "precision_adhd": 0.8148148148148148,
+    "recall_adhd": 0.7857142857142857,
+    "f1_adhd": 0.8
+  },
+  {
+    "name": "无瞳孔 (all - pupil, 16)",
+    "n_features": 16,
+    "accuracy": 0.78,
+    "precision_adhd": 0.8148148148148148,
+    "recall_adhd": 0.7857142857142857,
+    "f1_adhd": 0.8
+  },
+  {
+    "name": "无注视 (all - gaze, 24)",
+    "n_features": 24,
+    "accuracy": 0.82,
+    "precision_adhd": 0.8275862068965517,
+    "recall_adhd": 0.8571428571428571,
+    "f1_adhd": 0.8421052631578947
+  }
+]

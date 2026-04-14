@@ -232,8 +232,15 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     let mut all_gx: Vec<f64> = Vec::new();
     let mut all_gy: Vec<f64> = Vec::new();
     for t in trials {
-        all_gx.extend(t.gaze_x_series.iter().filter(|v| !v.is_nan()));
-        all_gy.extend(t.gaze_y_series.iter().filter(|v| !v.is_nan()));
+        let n = t.gaze_x_series.len().min(t.gaze_y_series.len());
+        for i in 0..n {
+            let gx = t.gaze_x_series[i];
+            let gy = t.gaze_y_series[i];
+            if !gx.is_nan() && !gy.is_nan() {
+                all_gx.push(gx);
+                all_gy.push(gy);
+            }
+        }
     }
 
     let (gaze_var_x, gaze_var_y, gaze_path_normalized);
@@ -406,6 +413,12 @@ pub struct AdhdReport {
     pub attention_profile: AttentionProfile,
     /// Per-block accuracy + RT for the fatigue timeline
     pub block_stats: Vec<BlockStats>,
+    /// Population standard deviation of per-tree ADHD probabilities.
+    pub adhd_probability_std: f64,
+    /// Lower bound of the 95% empirical confidence interval (2.5th pct of per-tree probs).
+    pub adhd_probability_ci95_low: f64,
+    /// Upper bound of the 95% empirical confidence interval (97.5th pct of per-tree probs).
+    pub adhd_probability_ci95_high: f64,
 }
 
 impl RfModelBundle {
@@ -434,11 +447,15 @@ impl RfModelBundle {
             .map(|(i, &v)| (v - self.scaler.mean[i]) / self.scaler.scale[i])
             .collect();
 
-        // 4. Aggregate votes from all trees
+        // 4. Aggregate votes from all trees AND record each tree's ADHD
+        //    probability so we can derive an empirical CI over the ensemble.
         let mut total_prob = vec![0.0f64; self.n_classes];
+        let mut tree_adhd_probs: Vec<f64> = Vec::with_capacity(self.n_estimators);
         for tree in &self.trees {
             let votes = predict_single_tree(tree, &x_scaled);
             let s: f64 = votes.iter().sum::<f64>().max(1e-10);
+            let tree_adhd = votes.get(1).copied().unwrap_or(0.0) / s;
+            tree_adhd_probs.push(tree_adhd);
             for c in 0..self.n_classes {
                 total_prob[c] += votes[c] / s;
             }
@@ -451,6 +468,30 @@ impl RfModelBundle {
 
         let adhd_prob = total_prob.get(1).copied().unwrap_or(0.0);
         let control_prob = total_prob.get(0).copied().unwrap_or(0.0);
+
+        // 4b. Uncertainty: population std + empirical 95% CI from the per-tree
+        //     ADHD probability distribution (300 trees → 300-sample ECDF).
+        let (adhd_probability_std, adhd_probability_ci95_low, adhd_probability_ci95_high) =
+            if tree_adhd_probs.is_empty() {
+                (0.0, adhd_prob, adhd_prob)
+            } else {
+                let len = tree_adhd_probs.len();
+                let mean = adhd_prob;
+                let var: f64 = tree_adhd_probs
+                    .iter()
+                    .map(|p| (p - mean).powi(2))
+                    .sum::<f64>()
+                    / len as f64;
+                let std = var.sqrt();
+
+                let mut sorted = tree_adhd_probs.clone();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let q = |p: f64| -> f64 {
+                    let idx = ((p * (len - 1) as f64) as usize).min(len - 1);
+                    sorted[idx]
+                };
+                (std, q(0.025), q(0.975))
+            };
         let prediction = if adhd_prob >= 0.5 { "ADHD" } else { "Control" };
         let risk_level = if adhd_prob >= 0.7 { "HIGH" }
             else if adhd_prob >= 0.5 { "MODERATE" }
@@ -494,6 +535,9 @@ impl RfModelBundle {
             model_info: "Random Forest (LOOCV Accuracy: 80.0%)".to_string(),
             attention_profile: AttentionProfile::default(),
             block_stats: Vec::new(),
+            adhd_probability_std,
+            adhd_probability_ci95_low,
+            adhd_probability_ci95_high,
         }
     }
 }
@@ -531,6 +575,12 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
         100.0 / (1.0 + (-k * x).exp())
     };
 
+    // NOTE: sigmoid (center, k) constants below are auto-calibrated from
+    // model/adhd_pupil_classifier/features.csv (50 subjects: 22 Control, 28 ADHD).
+    // center = midpoint of Control P50 and ADHD P50; k = 2*ln(4)/|adhd_p50 - ctrl_p50|
+    // so the sigmoid passes ~0.2→0.8 across the two-group medians.
+    // Regenerate via scripts/calibrate_attention_sigmoid.py.
+
     // 1. Sustained attention — 持续注意力
     //    Low rt_skewness + small pupil late-minus-early = good sustained attention
     //    (ADHD kids have high skewness from long-tail slow RTs as they lose focus)
@@ -538,8 +588,10 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
         let skew = get("rt_skewness");
         let late_early = get("pupil_late_minus_early");
         // Both should be LOW for good sustained attention → invert
-        let s1 = sigmoid_map(skew, 0.5, 3.0, true);      // skew < 0.5 = good
-        let s2 = sigmoid_map(late_early, 0.02, 50.0, true); // late-early < 0.02 = stable
+        // rt_skewness: ctrl_p50=0.6525 adhd_p50=0.4338
+        let s1 = sigmoid_map(skew, 0.543158, 12.6765, true);
+        // pupil_late_minus_early: ctrl_p50=1.557 adhd_p50=1.430
+        let s2 = sigmoid_map(late_early, 1.49344, 21.8408, true);
         (s1 + s2) / 2.0
     };
 
@@ -548,8 +600,10 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     let cog_load = {
         let rt_diff = get("rt_load_diff").abs();
         let pupil_diff = get("pupil_load_diff").abs();
-        let s1 = sigmoid_map(rt_diff, 100.0, 0.02, true);   // <100ms diff = good
-        let s2 = sigmoid_map(pupil_diff, 0.03, 30.0, true); // <0.03 = good
+        // rt_load_diff (abs): ctrl_p50=57.25 adhd_p50=39.62
+        let s1 = sigmoid_map(rt_diff, 48.4324, 0.157245, true);
+        // pupil_load_diff (abs): ctrl_p50=0.1703 adhd_p50=0.2862
+        let s2 = sigmoid_map(pupil_diff, 0.228262, 23.9182, true);
         (s1 + s2) / 2.0
     };
 
@@ -558,8 +612,10 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     let distractor = {
         let rt_slope = get("rt_distractor_slope").abs();
         let acc_slope = get("acc_distractor_slope").abs();
-        let s1 = sigmoid_map(rt_slope, 20.0, 0.05, true);
-        let s2 = sigmoid_map(acc_slope, 0.05, 20.0, true);
+        // rt_distractor_slope (abs): ctrl_p50=11.45 adhd_p50=12.46
+        let s1 = sigmoid_map(rt_slope, 11.9517, 2.74102, true);
+        // acc_distractor_slope (abs): ctrl_p50=0.02893 adhd_p50=0.03054
+        let s2 = sigmoid_map(acc_slope, 0.0297342, 1728.6, true);
         (s1 + s2) / 2.0
     };
 
@@ -567,17 +623,20 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     //    Low cv_rt = consistent response times
     let stability = {
         let cv = get("cv_rt");
-        sigmoid_map(cv, 0.25, 10.0, true) // cv < 0.25 = stable
+        // cv_rt: ctrl_p50=0.2296 adhd_p50=0.3092
+        sigmoid_map(cv, 0.269376, 34.8156, true)
     };
 
     // 5. Pupil engagement — 瞳孔活跃度 (认知投入)
     //    High pupil_max_peak + positive slope = actively engaged
     let engagement = {
         let peak = get("pupil_max_peak");
-        let slope = get("pupil_slope");
+        let _slope = get("pupil_slope");
         let auc = get("pupil_auc");
-        let s1 = sigmoid_map(peak, 0.05, 20.0, false);  // peak > 0.05 = engaged
-        let s2 = sigmoid_map(auc, 0.02, 50.0, false);   // positive AUC = engaged
+        // pupil_max_peak: ctrl_p50=8.042 adhd_p50=10.34
+        let s1 = sigmoid_map(peak, 9.19291, 1.2043, false);
+        // pupil_auc: ctrl_p50=0.4769 adhd_p50=0.245
+        let s2 = sigmoid_map(auc, 0.360924, 11.9559, false);
         (s1 + s2) / 2.0
     };
 
@@ -586,8 +645,10 @@ pub fn compute_attention_profile(features: &HashMap<String, f64>) -> AttentionPr
     let gaze_ctrl = {
         let var_x = get("gaze_var_x");
         let path = get("gaze_path_normalized");
-        let s1 = sigmoid_map(var_x, 10000.0, 0.0002, true); // <10000 px² var = good
-        let s2 = sigmoid_map(path, 5.0, 0.3, true);          // <5 px/frame = good
+        // gaze_var_x: ctrl_p50=6871 adhd_p50=6074
+        let s1 = sigmoid_map(var_x, 6472.62, 0.00348039, true);
+        // gaze_path_normalized: ctrl_p50=0.8837 adhd_p50=1.108
+        let s2 = sigmoid_map(path, 0.995881, 12.3587, true);
         (s1 + s2) / 2.0
     };
 
@@ -683,13 +744,14 @@ fn std_dev(v: &[f64]) -> f64 {
 }
 
 fn skewness(v: &[f64]) -> f64 {
-    if v.len() < 4 { return 0.0; }
-    let m = mean(v);
-    let s = std_dev(v);
-    if s < 1e-10 { return 0.0; }
+    if v.len() < 3 { return 0.0; }
     let n = v.len() as f64;
-    let m3: f64 = v.iter().map(|x| ((x - m) / s).powi(3)).sum::<f64>();
-    m3 / n
+    let m = mean(v);
+    let m2: f64 = v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / n;
+    if m2 <= 0.0 { return 0.0; }
+    let m3: f64 = v.iter().map(|x| (x - m).powi(3)).sum::<f64>() / n;
+    let g1 = m3 / m2.powf(1.5);
+    (n * (n - 1.0)).sqrt() / (n - 2.0) * g1
 }
 
 /// Simple linear regression slope: y = slope * x + intercept
@@ -790,5 +852,18 @@ mod tests {
         let report = model.predict(&features);
         assert!(report.adhd_probability >= 0.0 && report.adhd_probability <= 1.0);
         assert!(!report.risk_level.is_empty());
+
+        // Uncertainty block: std ≥ 0, CI well-formed and contains the mean.
+        assert!(report.adhd_probability_std >= 0.0);
+        assert!(report.adhd_probability_ci95_low <= report.adhd_probability_ci95_high);
+        assert!(report.adhd_probability_ci95_low >= 0.0);
+        assert!(report.adhd_probability_ci95_high <= 1.0);
+        eprintln!(
+            "RF predict on zero-features → p(ADHD)={:.4}, std={:.4}, CI95=[{:.4}, {:.4}]",
+            report.adhd_probability,
+            report.adhd_probability_std,
+            report.adhd_probability_ci95_low,
+            report.adhd_probability_ci95_high,
+        );
     }
 }

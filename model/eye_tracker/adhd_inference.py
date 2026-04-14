@@ -114,8 +114,15 @@ def extract_features(trial_results, fps=30):
 
         slope_len = min(len(post_data) // 3, int(fps * 1.0))
         if slope_len > 5:
-            slope = float(np.polyfit(np.arange(slope_len),
-                                     post_data[:slope_len], 1)[0])
+            slope_raw = float(np.polyfit(np.arange(slope_len),
+                                         post_data[:slope_len], 1)[0])
+            # Unit fix — training data is 1000 Hz (Δ%/ms); inference is
+            # at `fps` Hz so polyfit slope is Δ%/frame. Multiply by
+            # (fps / 1000.0) to convert to Δ%/ms, matching the trained
+            # StandardScaler's distribution. `pupil_slope_var` is the
+            # std of per-trial slopes so it inherits the same unit fix
+            # (not in top-12 selected features but kept consistent).
+            slope = slope_raw * (fps / 1000.0)
         else:
             slope = 0.0
 

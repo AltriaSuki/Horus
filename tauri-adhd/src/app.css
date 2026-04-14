@@ -55,13 +55,16 @@
 }
 
 /* ── Reset & Base ─────────────────────────────────────────────── */
-*, *::before, *::after {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
   margin: 0;
   padding: 0;
 }
 
-html, body {
+html,
+body {
   height: 100%;
   width: 100%;
   overflow: hidden;
@@ -90,7 +93,9 @@ button {
   background: none;
 }
 
-input, select, textarea {
+input,
+select,
+textarea {
   font-family: inherit;
   font-size: inherit;
   outline: none;
@@ -100,9 +105,11 @@ input, select, textarea {
 ::-webkit-scrollbar {
   width: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--text-muted);
   border-radius: var(--radius-pill);
@@ -138,14 +145,17 @@ input, select, textarea {
   box-shadow: var(--shadow-md);
   transition: transform 0.15s, box-shadow 0.15s;
 }
+
 .btn-primary:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow-lg);
 }
+
 .btn-primary:active {
   transform: translateY(0);
   box-shadow: var(--shadow-sm);
 }
+
 .btn-primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -166,10 +176,12 @@ input, select, textarea {
   box-shadow: var(--shadow-md);
   transition: transform 0.15s, box-shadow 0.15s;
 }
+
 .btn-secondary:hover {
   transform: translateY(-1px);
   box-shadow: var(--shadow-lg);
 }
+
 .btn-secondary:active {
   transform: translateY(0);
 }
@@ -184,9 +196,11 @@ input, select, textarea {
   background: var(--surface);
   transition: border-color 0.2s;
 }
+
 .input-field:focus {
   border-color: var(--primary);
 }
+
 .input-field::placeholder {
   color: var(--text-muted);
 }
@@ -209,18 +223,37 @@ input, select, textarea {
 
 /* ── Animations ───────────────────────────────────────────────── */
 @keyframes fadeIn {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes pulse {
-  0%, 100% { transform: scale(1); }
-  50% { transform: scale(1.05); }
+
+  0%,
+  100% {
+    transform: scale(1);
+  }
+
+  50% {
+    transform: scale(1.05);
+  }
 }
 
 @keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .animate-fade-in {

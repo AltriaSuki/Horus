@@ -336,10 +336,24 @@
   class="calibration-canvas"
 ></canvas>
 
-<!-- Visible exit button in top-left corner -->
-<button class="exit-btn" onclick={() => { if (onCancel) onCancel(); }}>
-  退出
-</button>
+<!-- Exit button — positioned dynamically to avoid the current target.
+     When the target is in the top-left quadrant, button goes to bottom-right, etc. -->
+{#if currentPoint}
+  <button
+    class="exit-btn"
+    class:exit-bottom-right={currentPoint.x < 0.5 && currentPoint.y < 0.5}
+    class:exit-bottom-left={currentPoint.x >= 0.5 && currentPoint.y < 0.5}
+    class:exit-top-right={currentPoint.x < 0.5 && currentPoint.y >= 0.5}
+    class:exit-top-left={currentPoint.x >= 0.5 && currentPoint.y >= 0.5}
+    onclick={() => { if (onCancel) onCancel(); }}
+  >
+    退出
+  </button>
+{:else}
+  <button class="exit-btn exit-top-left" onclick={() => { if (onCancel) onCancel(); }}>
+    退出
+  </button>
+{/if}
 
 <style>
   .calibration-canvas {
@@ -355,8 +369,6 @@
 
   .exit-btn {
     position: fixed;
-    top: 20px;
-    left: 20px;
     z-index: 1001;
     background: rgba(255, 255, 255, 0.12);
     color: rgba(255, 248, 240, 0.7);
@@ -367,11 +379,16 @@
     font-weight: 600;
     cursor: pointer;
     backdrop-filter: blur(8px);
-    transition: all 0.2s;
+    transition: all 0.35s ease;
   }
   .exit-btn:hover {
     background: rgba(255, 140, 66, 0.3);
     color: #FFF8F0;
     border-color: #FF8C42;
   }
+  /* Dynamic positioning — always in the opposite corner from the target */
+  .exit-top-left     { top: 20px; left: 20px; }
+  .exit-top-right    { top: 20px; right: 20px; }
+  .exit-bottom-left  { bottom: 20px; left: 20px; }
+  .exit-bottom-right { bottom: 20px; right: 20px; }
 </style>

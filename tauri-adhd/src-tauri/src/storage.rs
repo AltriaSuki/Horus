@@ -149,6 +149,10 @@ pub fn get_report(session_id: &str) -> anyhow::Result<Option<crate::inference::A
             model_info: row.get(5)?,
             attention_profile: crate::inference::AttentionProfile::default(),
             block_stats: Vec::new(),
+            // Per-tree uncertainty is not persisted — re-derive on live predict.
+            adhd_probability_std: 0.0,
+            adhd_probability_ci95_low: 0.0,
+            adhd_probability_ci95_high: 0.0,
         })
     })?;
     match rows.next() {

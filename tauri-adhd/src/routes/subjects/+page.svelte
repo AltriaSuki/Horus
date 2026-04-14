@@ -62,7 +62,7 @@
   {:else if subjects.length === 0}
     <div class="empty-state animate-fade-in">
       <div class="empty-illustration">
-        <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
+        <svg width="120" height="120" viewBox="0 0 120 120" fill="none" class="animate-float">
           <circle cx="60" cy="60" r="50" fill="rgba(255,255,255,0.4)" />
           <!-- Head -->
           <circle cx="60" cy="45" r="18" fill="var(--primary)"/>
@@ -79,9 +79,9 @@
       <p class="empty-desc">点击上方按钮添加第一个被试</p>
     </div>
   {:else}
-    <div class="subject-grid animate-fade-in">
+    <div class="subject-grid">
       {#each subjects as subject, i}
-        <div class="subject-card card">
+        <div class="subject-card card animate-fade-in stagger-{(i % 5) + 1}">
           <div class="avatar" style="background: {getAvatarColor(i)}">
             <span class="avatar-letter">{getInitial(subject.display_name)}</span>
           </div>

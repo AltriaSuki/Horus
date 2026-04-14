@@ -103,7 +103,7 @@
 <div class="page-content">
   <!-- Hero card -->
   <div class="hero-card animate-fade-in">
-    <div class="hero-bg">
+    <div class="hero-bg animate-float">
       <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
         <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
         <!-- Gamepad body -->

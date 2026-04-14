@@ -59,7 +59,7 @@
 <div class="page-content">
   <!-- Hero card -->
   <div class="hero-card animate-fade-in">
-    <div class="hero-bg">
+    <div class="hero-bg animate-float">
       <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
         <!-- Glowing Background -->
         <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
@@ -79,24 +79,24 @@
   </div>
 
   <!-- Steps guide -->
-  <div class="steps-section animate-fade-in">
-    <h2 class="section-title">闯关流程</h2>
+  <div class="steps-section">
+    <h2 class="section-title animate-fade-in">闯关流程</h2>
     <div class="steps">
-      <div class="step">
+      <div class="step animate-fade-in stagger-1">
         <div class="step-badge">1</div>
         <div class="step-content">
           <span class="step-title">校准眼动</span>
           <span class="step-desc">跟随屏幕上的圆点点击，让系统熟悉你的眼睛</span>
         </div>
       </div>
-      <div class="step">
+      <div class="step animate-fade-in stagger-2">
         <div class="step-badge">2</div>
         <div class="step-content">
           <span class="step-title">视觉记忆闯关</span>
           <span class="step-desc">记住出现的小圆点，判断探测点是否出现过 (共8关)</span>
         </div>
       </div>
-      <div class="step">
+      <div class="step animate-fade-in stagger-3">
         <div class="step-badge">3</div>
         <div class="step-content">
           <span class="step-title">查看报告</span>
@@ -107,7 +107,7 @@
   </div>
 
   <!-- Subject picker -->
-  <div class="picker-section animate-fade-in">
+  <div class="picker-section animate-fade-in stagger-4">
     <h2 class="section-title">选择被试</h2>
     {#if loadingSubjects}
       <p class="text-muted">加载中...</p>

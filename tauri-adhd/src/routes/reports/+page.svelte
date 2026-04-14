@@ -137,7 +137,7 @@
       </div>
     {:else if sessions.length === 0}
       <div class="empty-state">
-        <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
+        <svg width="120" height="120" viewBox="0 0 120 120" fill="none" class="animate-float">
           <!-- Glowing background -->
           <circle cx="60" cy="60" r="50" fill="rgba(255,255,255,0.4)"/>
           <!-- Bear face -->
@@ -163,7 +163,7 @@
     {:else}
       <div class="sessions-list">
         {#each sessions as session, i}
-          <button class="session-card card" onclick={() => viewReport(session)}>
+          <button class="session-card card animate-fade-in stagger-{(i % 5) + 1}" onclick={() => viewReport(session)}>
             <div class="session-header">
               <span class="session-num">第 {sessions.length - i} 次筛查</span>
               <span class="badge {statusBadgeClass(session.status)}">

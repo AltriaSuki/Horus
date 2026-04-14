@@ -3,43 +3,45 @@
    ════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Warm kid-friendly palette */
-  --primary: #FF8C42;
-  --primary-light: #FFB07A;
-  --primary-dark: #E07030;
-  --secondary: #4ECDC4;
-  --secondary-light: #7EDDD6;
-  --secondary-dark: #3BABA4;
-  --tertiary: #FFD166;
-  --tertiary-light: #FFE199;
-  --tertiary-dark: #E0B84E;
-  --bg: #FFF8F0;
-  --surface: #FFFFFF;
-  --text: #2B1810;
-  --text-muted: #8B6F5C;
-  --error: #E63946;
-  --error-light: #FF6B6B;
-  --success: #4ECDC4;
-  --warning: #FFD166;
+  /* Soft, Safe, Pastel Child-friendly palette */
+  --primary: #FFB0A0;
+  --primary-light: #FFD1C1;
+  --primary-dark: #FF8C73;
+  --secondary: #A8E6CF;
+  --secondary-light: #CFF1E3;
+  --secondary-dark: #7BCEB0;
+  --tertiary: #A4DEFF;
+  --tertiary-light: #CDEBFF;
+  --tertiary-dark: #7ABCE5;
+  --bg: #FFF9F0;
+  --surface: rgba(255, 255, 255, 0.75);
+  --surface-solid: #FFFFFF;
+  --text: #5A5046;
+  --text-muted: #A3968A;
+  --error: #FF9A9E;
+  --error-light: #FFC4C6;
+  --success: #A8E6CF;
+  --warning: #FFE699;
 
   /* Spacing */
-  --space-xs: 4px;
-  --space-sm: 8px;
-  --space-md: 16px;
-  --space-lg: 24px;
-  --space-xl: 32px;
-  --space-2xl: 48px;
+  --space-xs: 6px;
+  --space-sm: 12px;
+  --space-md: 20px;
+  --space-lg: 32px;
+  --space-xl: 48px;
+  --space-2xl: 64px;
 
-  /* Radii */
-  --radius-sm: 12px;
-  --radius-md: 20px;
-  --radius-lg: 28px;
+  /* Radii - Squishy & safe */
+  --radius-sm: 16px;
+  --radius-md: 24px;
+  --radius-lg: 36px;
+  --radius-xl: 48px;
   --radius-pill: 9999px;
 
-  /* Shadows */
-  --shadow-sm: 0 2px 8px rgba(43, 24, 16, 0.06);
-  --shadow-md: 0 4px 16px rgba(43, 24, 16, 0.08);
-  --shadow-lg: 0 8px 32px rgba(43, 24, 16, 0.12);
+  /* Soft Ambient Shadows */
+  --shadow-sm: 0 4px 20px rgba(163, 150, 138, 0.08);
+  --shadow-md: 0 8px 32px rgba(163, 150, 138, 0.12);
+  --shadow-lg: 0 16px 48px rgba(163, 150, 138, 0.16);
 
   /* Typography */
   --font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -126,40 +128,49 @@ textarea {
 
 .card {
   background: var(--surface);
-  border-radius: var(--radius-md);
+  border: 3px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-lg);
   padding: var(--space-lg);
   box-shadow: var(--shadow-sm);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
 }
 
+/* Bouncy Jelly Buttons */
 .btn-primary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 14px 32px;
+  padding: 16px 36px;
   background: var(--primary);
   color: white;
   border-radius: var(--radius-pill);
   font-size: var(--font-size-lg);
-  font-weight: 600;
-  box-shadow: var(--shadow-md);
-  transition: transform 0.15s, box-shadow 0.15s;
+  font-weight: 800;
+  box-shadow: 0 6px 0 var(--primary-dark), 0 10px 24px rgba(255, 176, 160, 0.4);
+  transform: translateY(0);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  text-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 0 var(--primary-dark), 0 16px 32px rgba(255, 176, 160, 0.5);
 }
 
 .btn-primary:active {
-  transform: translateY(0);
-  box-shadow: var(--shadow-sm);
+  transform: translateY(6px);
+  box-shadow: 0 0px 0 var(--primary-dark), 0 2px 8px rgba(255, 176, 160, 0.3);
+  transition: transform 0.1s, box-shadow 0.1s;
 }
 
 .btn-primary:disabled {
-  opacity: 0.5;
+  opacity: 0.6;
   cursor: not-allowed;
-  transform: none;
+  transform: translateY(0);
+  box-shadow: 0 4px 0 var(--text-muted);
+  background: var(--text-muted);
 }
 
 .btn-secondary {
@@ -167,38 +178,46 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: var(--space-sm);
-  padding: 12px 28px;
-  background: var(--secondary);
-  color: white;
+  padding: 14px 32px;
+  background: white;
+  color: var(--text);
   border-radius: var(--radius-pill);
   font-size: var(--font-size-lg);
-  font-weight: 600;
-  box-shadow: var(--shadow-md);
-  transition: transform 0.15s, box-shadow 0.15s;
+  font-weight: 700;
+  box-shadow: 0 6px 0 #E8DDD4, 0 10px 24px rgba(163, 150, 138, 0.15);
+  transform: translateY(0);
+  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
 .btn-secondary:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  box-shadow: 0 8px 0 #E8DDD4, 0 16px 32px rgba(163, 150, 138, 0.2);
 }
 
 .btn-secondary:active {
-  transform: translateY(0);
+  transform: translateY(6px);
+  box-shadow: 0 0px 0 #E8DDD4, 0 2px 8px rgba(163, 150, 138, 0.1);
+  transition: transform 0.1s, box-shadow 0.1s;
 }
 
 .input-field {
   width: 100%;
-  padding: 14px 18px;
-  border: 2px solid #E8DDD4;
-  border-radius: var(--radius-sm);
+  padding: 16px 24px;
+  border: 3px solid rgba(255, 255, 255, 0.6);
+  border-radius: var(--radius-pill);
   font-size: var(--font-size-base);
   color: var(--text);
   background: var(--surface);
-  transition: border-color 0.2s;
+  box-shadow: inset 0 2px 6px rgba(163, 150, 138, 0.06);
+  transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+  font-weight: 600;
 }
 
 .input-field:focus {
-  border-color: var(--primary);
+  border-color: var(--tertiary);
+  background: #FFFFFF;
+  box-shadow: 0 0 0 4px var(--tertiary-light);
+  outline: none;
 }
 
 .input-field::placeholder {

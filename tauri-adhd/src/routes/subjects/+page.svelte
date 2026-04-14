@@ -170,15 +170,21 @@
     align-items: center;
     gap: var(--space-md);
     padding: var(--space-md) var(--space-lg);
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
+  }
+  .subject-card:hover {
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 16px 32px rgba(163, 150, 138, 0.15);
   }
   .avatar {
-    width: 48px;
-    height: 48px;
-    border-radius: 50%;
+    width: 56px;
+    height: 56px;
+    border-radius: 40%; /* Squircle */
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    box-shadow: inset 0 -4px 8px rgba(0,0,0,0.1), 0 4px 12px rgba(0,0,0,0.15);
   }
   .avatar-letter {
     font-size: var(--font-size-xl);

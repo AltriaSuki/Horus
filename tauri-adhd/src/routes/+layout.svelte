@@ -127,10 +127,12 @@
     align-items: center;
     justify-content: space-between;
     padding: 12px var(--space-lg);
-    background: var(--surface);
-    border-bottom: 1px solid rgba(43, 24, 16, 0.06);
+    background: rgba(255, 255, 255, 0.4);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
     flex-shrink: 0;
     height: 60px;
+    z-index: 10;
   }
   .top-bar-left {
     display: flex;
@@ -142,7 +144,7 @@
   }
   .app-title {
     font-size: var(--font-size-lg);
-    font-weight: 700;
+    font-weight: 800;
     color: var(--text);
   }
 
@@ -150,19 +152,20 @@
   .health-chip {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 4px 12px;
+    gap: 8px;
+    padding: 6px 16px;
     border-radius: var(--radius-pill);
-    background: #F0E8E0;
-    font-size: 12px;
+    background: rgba(255, 255, 255, 0.6);
+    box-shadow: inset 0 2px 4px rgba(255,255,255,0.8), 0 2px 8px rgba(163, 150, 138, 0.06);
+    font-size: 13px;
+    font-weight: 700;
     color: var(--text-muted);
   }
   .health-chip.healthy {
-    background: #E0F5F3;
     color: var(--secondary-dark);
   }
   .health-chip.error {
-    background: #FFE0E0;
+    background: #FFF0F0;
     color: var(--error);
   }
   .health-dot {
@@ -185,16 +188,25 @@
     overflow-x: hidden;
   }
 
-  /* ── Bottom nav ────────────────────────────────────────────── */
+  /* ── Bottom nav (Floating Pill) ───────────────────────────── */
   .bottom-nav {
     display: flex;
+    position: fixed;
+    bottom: var(--space-lg);
+    left: 50%;
+    transform: translateX(-50%);
     align-items: stretch;
     justify-content: space-around;
-    height: var(--nav-height);
-    background: var(--surface);
-    border-top: 1px solid rgba(43, 24, 16, 0.06);
-    flex-shrink: 0;
-    padding-bottom: env(safe-area-inset-bottom, 0);
+    height: 72px;
+    width: max-content;
+    gap: 8px;
+    padding: 8px;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border-radius: var(--radius-pill);
+    box-shadow: 0 12px 32px rgba(163, 150, 138, 0.15), 0 0 0 4px rgba(255, 255, 255, 0.5);
+    z-index: 50;
   }
   .nav-tab {
     display: flex;
@@ -202,13 +214,17 @@
     align-items: center;
     justify-content: center;
     gap: 2px;
-    flex: 1;
+    padding: 4px 20px;
+    border-radius: var(--radius-pill);
     color: var(--text-muted);
-    transition: color 0.2s;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
     text-decoration: none;
   }
   .nav-tab.active {
-    color: var(--primary);
+    background: white;
+    color: var(--primary-dark);
+    box-shadow: 0 4px 12px rgba(255, 176, 160, 0.2);
+    transform: translateY(-2px);
   }
   .nav-icon {
     width: 28px;
@@ -218,7 +234,7 @@
     justify-content: center;
   }
   .nav-label {
-    font-size: 12px;
-    font-weight: 600;
+    font-size: 13px;
+    font-weight: 800;
   }
 </style>

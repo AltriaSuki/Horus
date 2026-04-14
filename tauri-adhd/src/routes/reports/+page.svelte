@@ -247,12 +247,12 @@
     text-align: left;
     cursor: pointer;
     position: relative;
-    transition: transform 0.15s, box-shadow 0.15s;
+    transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
     width: 100%;
   }
   .session-card:hover {
-    transform: translateY(-1px);
-    box-shadow: var(--shadow-md);
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 16px 32px rgba(163, 150, 138, 0.15);
   }
   .session-header {
     display: flex;

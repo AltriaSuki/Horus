@@ -187,18 +187,20 @@
   /* Hero */
   .hero-card {
     background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-dark) 100%);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     padding: var(--space-2xl) var(--space-lg);
     text-align: center;
     color: white;
     position: relative;
     overflow: hidden;
     margin-bottom: var(--space-xl);
+    box-shadow: 0 16px 32px rgba(168, 230, 207, 0.4);
+    border: 4px solid rgba(255, 255, 255, 0.4);
   }
   .hero-bg {
     display: flex;
     justify-content: center;
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
   .hero-title {
     font-size: var(--font-size-2xl);
@@ -270,13 +272,17 @@
   }
   .gaze-monitor {
     padding: var(--space-md);
+    background: var(--surface-solid);
+    border-radius: var(--radius-lg);
+    border: 3px solid rgba(255, 255, 255, 0.6);
   }
   .gaze-canvas {
     width: 100%;
     height: auto;
-    border-radius: var(--radius-sm);
+    border-radius: var(--radius-md);
     background: #1A1A2E;
     display: block;
+    box-shadow: inset 0 4px 12px rgba(0,0,0,0.2);
   }
   .gaze-status {
     display: flex;

@@ -147,18 +147,20 @@
   /* ── Hero card ─────────────────────────────────────────────── */
   .hero-card {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-xl);
     padding: var(--space-2xl) var(--space-lg);
     text-align: center;
     color: white;
     position: relative;
     overflow: hidden;
     margin-bottom: var(--space-xl);
+    box-shadow: 0 16px 32px rgba(255, 140, 115, 0.2);
+    border: 4px solid rgba(255, 255, 255, 0.4);
   }
   .hero-bg {
     display: flex;
     justify-content: center;
-    margin-bottom: var(--space-md);
+    margin-bottom: var(--space-lg);
   }
   .hero-title {
     font-size: var(--font-size-2xl);
@@ -183,28 +185,30 @@
     display: flex;
     align-items: flex-start;
     gap: var(--space-md);
-    background: var(--surface);
-    border-radius: var(--radius-md);
+    background: var(--surface-solid);
+    border-radius: var(--radius-lg);
+    border: 3px solid rgba(255, 255, 255, 0.6);
     padding: var(--space-md) var(--space-lg);
     box-shadow: var(--shadow-sm);
   }
   .step-badge {
-    width: 36px;
-    height: 36px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
     background: var(--tertiary);
-    color: var(--text);
+    color: white;
     font-weight: 800;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-xl);
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
+    box-shadow: 0 4px 12px rgba(164, 222, 255, 0.4);
   }
   .step-content {
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
   }
   .step-title {
     font-weight: 700;

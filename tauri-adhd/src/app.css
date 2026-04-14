@@ -169,7 +169,7 @@ textarea {
   border-radius: var(--radius-pill);
   font-size: var(--font-size-lg);
   font-weight: 800;
-  box-shadow: 0 6px 0 var(--primary-dark), 0 10px 24px rgba(255, 176, 160, 0.4);
+  box-shadow: 0 6px 0 var(--primary-dark);
   transform: translateY(0);
   transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
   text-shadow: 0 2px 4px rgba(0,0,0,0.1);
@@ -177,12 +177,12 @@ textarea {
 
 .btn-primary:hover {
   transform: translateY(-2px);
-  box-shadow: 0 8px 0 var(--primary-dark), 0 16px 32px rgba(255, 176, 160, 0.5);
+  box-shadow: 0 8px 0 var(--primary-dark);
 }
 
 .btn-primary:active {
   transform: translateY(6px);
-  box-shadow: 0 0px 0 var(--primary-dark), 0 2px 8px rgba(255, 176, 160, 0.3);
+  box-shadow: 0 0px 0 var(--primary-dark);
   transition: transform 0.1s, box-shadow 0.1s;
 }
 
@@ -235,9 +235,9 @@ textarea {
 }
 
 .input-field:focus {
-  border-color: var(--tertiary);
+  border-color: var(--primary);
   background: #FFFFFF;
-  box-shadow: 0 0 0 4px var(--tertiary-light);
+  box-shadow: 0 0 0 4px var(--primary-light);
   outline: none;
 }
 

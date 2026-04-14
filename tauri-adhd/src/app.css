@@ -4,22 +4,22 @@
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap');
 
 :root {
-  /* Domain Colors (Role-based) */
-  --c-coral: #FFB0A0;
-  --c-coral-light: #FFD1C1;
-  --c-coral-dark: #FF8C73;
+  /* Global Gamified Colors (High Vibrancy & Contrast) */
+  --c-coral: #FF6B6B;
+  --c-coral-light: #FF9E9E;
+  --c-coral-dark: #E04848;
 
-  --c-mint: #A8E6CF;
-  --c-mint-light: #CFF1E3;
-  --c-mint-dark: #7BCEB0;
+  --c-mint: #2CE89A;
+  --c-mint-light: #7BFFC7;
+  --c-mint-dark: #12C479;
 
-  --c-yellow: #FFD166;
-  --c-yellow-light: #FFE699;
-  --c-yellow-dark: #F5A623;
+  --c-yellow: #FFC800;
+  --c-yellow-light: #FFDB4D;
+  --c-yellow-dark: #DFA600;
 
-  --c-blue: #A4DEFF;
-  --c-blue-light: #CDEBFF;
-  --c-blue-dark: #7ABCE5;
+  --c-blue: #1CB0F6;
+  --c-blue-light: #78D1FF;
+  --c-blue-dark: #1480B3;
 
   /* Current Active Theme (Default fallback) */
   --primary: var(--c-coral);
@@ -59,10 +59,10 @@
   --radius-xl: 64px;
   --radius-pill: 9999px;
 
-  /* Soft Ambient Shadows (Sits on desktop, warm tone) */
-  --shadow-sm: 0 8px 12px -2px rgba(163, 150, 138, 0.15);
-  --shadow-md: 0 16px 24px -4px rgba(163, 150, 138, 0.2);
-  --shadow-lg: 0 24px 40px -6px rgba(163, 150, 138, 0.25);
+  /* Solid 3D Gamified Shadows (Duolingo Style) */
+  --shadow-sm: 0 4px 0 rgba(210, 195, 180, 0.4);
+  --shadow-md: 0 8px 0 rgba(210, 195, 180, 0.4);
+  --shadow-lg: 0 12px 0 rgba(210, 195, 180, 0.3);
 
   /* Typography */
   --font-family: "Nunito", "SF Pro Rounded", "ui-rounded", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
@@ -148,13 +148,11 @@ textarea {
 }
 
 .card {
-  background: var(--surface);
-  border: 3px solid rgba(255, 255, 255, 0.6);
+  background: var(--surface-solid);
+  border: 4px solid #FFFFFF;
   border-radius: var(--radius-lg);
   padding: var(--space-lg);
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
+  box-shadow: var(--shadow-md);
 }
 
 /* Bouncy Jelly Buttons */

@@ -104,13 +104,18 @@
   <!-- Hero card -->
   <div class="hero-card animate-fade-in">
     <div class="hero-bg">
-      <svg class="hero-icon" width="64" height="64" viewBox="0 0 64 64" fill="none">
-        <rect x="8" y="16" width="48" height="28" rx="14" fill="rgba(255,255,255,0.2)" />
-        <line x1="18" y1="30" x2="30" y2="30" stroke="white" stroke-width="2.5" stroke-linecap="round" />
-        <line x1="24" y1="24" x2="24" y2="36" stroke="white" stroke-width="2.5" stroke-linecap="round" />
-        <circle cx="38" cy="28" r="2" fill="white" />
-        <circle cx="44" cy="28" r="2" fill="white" />
-        <circle cx="41" cy="34" r="2" fill="white" />
+      <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
+        <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
+        <!-- Gamepad body -->
+        <rect x="15" y="25" width="50" height="30" rx="15" fill="white"/>
+        <!-- D-pad -->
+        <rect x="23" y="36" width="10" height="4" rx="1" fill="var(--primary-dark)"/>
+        <rect x="26" y="33" width="4" height="10" rx="1" fill="var(--primary-dark)"/>
+        <!-- Buttons -->
+        <circle cx="50" cy="42" r="4" fill="var(--primary-dark)"/>
+        <circle cx="58" cy="35" r="4" fill="var(--primary-dark)"/>
+        <!-- Smile -->
+        <path d="M35 45 Q 40 48 45 45" stroke="var(--primary-dark)" stroke-width="2.5" stroke-linecap="round" fill="none"/>
       </svg>
     </div>
     <h1 class="hero-title">注意力训练</h1>
@@ -186,7 +191,7 @@
 <style>
   /* Hero */
   .hero-card {
-    background: linear-gradient(135deg, var(--secondary) 0%, var(--secondary-dark) 100%);
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
     border-radius: var(--radius-xl);
     padding: var(--space-2xl) var(--space-lg);
     text-align: center;
@@ -194,7 +199,7 @@
     position: relative;
     overflow: hidden;
     margin-bottom: var(--space-xl);
-    box-shadow: 0 16px 32px rgba(168, 230, 207, 0.4);
+    box-shadow: var(--shadow-lg);
     border: 4px solid rgba(255, 255, 255, 0.4);
   }
   .hero-bg {

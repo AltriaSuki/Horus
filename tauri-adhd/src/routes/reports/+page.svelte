@@ -137,12 +137,25 @@
       </div>
     {:else if sessions.length === 0}
       <div class="empty-state">
-        <svg width="80" height="80" viewBox="0 0 80 80" fill="none">
-          <circle cx="40" cy="40" r="36" fill="#FFF0E0" stroke="var(--primary-light)" stroke-width="2" />
-          <rect x="26" y="22" width="28" height="36" rx="4" fill="var(--primary-light)" />
-          <line x1="32" y1="32" x2="48" y2="32" stroke="white" stroke-width="2" stroke-linecap="round" />
-          <line x1="32" y1="38" x2="44" y2="38" stroke="white" stroke-width="2" stroke-linecap="round" />
-          <line x1="32" y1="44" x2="46" y2="44" stroke="white" stroke-width="2" stroke-linecap="round" />
+        <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
+          <!-- Glowing background -->
+          <circle cx="60" cy="60" r="50" fill="rgba(255,255,255,0.4)"/>
+          <!-- Bear face -->
+          <circle cx="60" cy="50" r="30" fill="var(--primary)"/>
+          <circle cx="40" cy="30" r="12" fill="var(--primary)"/>
+          <circle cx="80" cy="30" r="12" fill="var(--primary)"/>
+          <circle cx="50" cy="45" r="4" fill="white"/>
+          <circle cx="70" cy="45" r="4" fill="white"/>
+          <path d="M55 52 Q 60 56 65 52" stroke="white" stroke-width="3" stroke-linecap="round" fill="none"/>
+          
+          <!-- Report -->
+          <rect x="35" y="60" width="50" height="45" rx="6" fill="white" stroke="var(--primary-dark)" stroke-width="3"/>
+          <line x1="45" y1="75" x2="75" y2="75" stroke="var(--primary-light)" stroke-width="4" stroke-linecap="round"/>
+          <line x1="45" y1="85" x2="65" y2="85" stroke="var(--primary-light)" stroke-width="4" stroke-linecap="round"/>
+          
+          <!-- Paws holding report -->
+          <circle cx="35" cy="80" r="8" fill="var(--primary-dark)"/>
+          <circle cx="85" cy="80" r="8" fill="var(--primary-dark)"/>
         </svg>
         <h2 class="empty-title">暂无筛查记录</h2>
         <p class="empty-desc">完成一次筛查后，记录将在这里显示</p>

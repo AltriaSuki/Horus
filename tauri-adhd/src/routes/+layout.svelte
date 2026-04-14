@@ -31,6 +31,13 @@
     return currentPath.startsWith(tabPath);
   }
 
+  let themeClass = $derived(
+    currentPath.startsWith('/subjects') ? 'theme-subjects' :
+    currentPath.startsWith('/screening') ? 'theme-screening' :
+    currentPath.startsWith('/training') ? 'theme-training' :
+    currentPath.startsWith('/reports') ? 'theme-reports' : 'theme-screening'
+  );
+
   /** Check if we are in a fullscreen task (calibration or running screening) */
   let isFullscreen = $derived(
     currentPath.startsWith('/screening/running')
@@ -40,7 +47,7 @@
 {#if isFullscreen}
   {@render children()}
 {:else}
-  <div class="app-shell">
+  <div class="app-shell {themeClass}">
     <header class="top-bar">
       <div class="top-bar-left">
         <div class="app-logo">
@@ -74,7 +81,7 @@
       {#each tabs as tab}
         <a
           href={tab.path}
-          class="nav-tab"
+          class="nav-tab {tab.path.slice(1)}"
           class:active={isActive(tab.path)}
         >
           <div class="nav-icon">
@@ -119,6 +126,27 @@
     flex-direction: column;
     height: 100vh;
     background: var(--bg);
+  }
+
+  .theme-subjects {
+    --primary: var(--c-blue);
+    --primary-light: var(--c-blue-light);
+    --primary-dark: var(--c-blue-dark);
+  }
+  .theme-screening {
+    --primary: var(--c-coral);
+    --primary-light: var(--c-coral-light);
+    --primary-dark: var(--c-coral-dark);
+  }
+  .theme-training {
+    --primary: var(--c-mint);
+    --primary-light: var(--c-mint-light);
+    --primary-dark: var(--c-mint-dark);
+  }
+  .theme-reports {
+    --primary: var(--c-yellow);
+    --primary-light: var(--c-yellow-light);
+    --primary-dark: var(--c-yellow-dark);
   }
 
   /* ── Top bar ───────────────────────────────────────────────── */
@@ -222,9 +250,24 @@
   }
   .nav-tab.active {
     background: white;
-    color: var(--primary-dark);
-    box-shadow: 0 4px 12px rgba(255, 176, 160, 0.2);
     transform: translateY(-2px);
+  }
+  
+  .nav-tab.subjects.active {
+    color: var(--c-blue-dark);
+    box-shadow: 0 4px 12px rgba(122, 188, 229, 0.3);
+  }
+  .nav-tab.screening.active {
+    color: var(--c-coral-dark);
+    box-shadow: 0 4px 12px rgba(255, 140, 115, 0.3);
+  }
+  .nav-tab.training.active {
+    color: var(--c-mint-dark);
+    box-shadow: 0 4px 12px rgba(123, 206, 176, 0.3);
+  }
+  .nav-tab.reports.active {
+    color: var(--c-yellow-dark);
+    box-shadow: 0 4px 12px rgba(245, 166, 35, 0.3);
   }
   .nav-icon {
     width: 28px;

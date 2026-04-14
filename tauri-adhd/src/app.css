@@ -3,17 +3,37 @@
    ════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* Soft, Safe, Pastel Child-friendly palette */
-  --primary: #FFB0A0;
-  --primary-light: #FFD1C1;
-  --primary-dark: #FF8C73;
-  --secondary: #A8E6CF;
-  --secondary-light: #CFF1E3;
-  --secondary-dark: #7BCEB0;
-  --tertiary: #A4DEFF;
-  --tertiary-light: #CDEBFF;
-  --tertiary-dark: #7ABCE5;
-  --bg: #FFF9F0;
+  /* Domain Colors (Role-based) */
+  --c-coral: #FFB0A0;
+  --c-coral-light: #FFD1C1;
+  --c-coral-dark: #FF8C73;
+
+  --c-mint: #A8E6CF;
+  --c-mint-light: #CFF1E3;
+  --c-mint-dark: #7BCEB0;
+
+  --c-yellow: #FFD166;
+  --c-yellow-light: #FFE699;
+  --c-yellow-dark: #F5A623;
+
+  --c-blue: #A4DEFF;
+  --c-blue-light: #CDEBFF;
+  --c-blue-dark: #7ABCE5;
+
+  /* Current Active Theme (Default fallback) */
+  --primary: var(--c-coral);
+  --primary-light: var(--c-coral-light);
+  --primary-dark: var(--c-coral-dark);
+  
+  --secondary: var(--c-mint);
+  --secondary-light: var(--c-mint-light);
+  --secondary-dark: var(--c-mint-dark);
+
+  --tertiary: var(--c-blue);
+  --tertiary-light: var(--c-blue-light);
+  --tertiary-dark: var(--c-blue-dark);
+
+  --bg: #F7F1E3;
   --surface: rgba(255, 255, 255, 0.75);
   --surface-solid: #FFFFFF;
   --text: #5A5046;
@@ -31,17 +51,17 @@
   --space-xl: 48px;
   --space-2xl: 64px;
 
-  /* Radii - Squishy & safe */
-  --radius-sm: 16px;
-  --radius-md: 24px;
-  --radius-lg: 36px;
-  --radius-xl: 48px;
+  /* Radii - Extremely Squishy & safe */
+  --radius-sm: 24px;
+  --radius-md: 32px;
+  --radius-lg: 48px;
+  --radius-xl: 64px;
   --radius-pill: 9999px;
 
-  /* Soft Ambient Shadows */
-  --shadow-sm: 0 4px 20px rgba(163, 150, 138, 0.08);
-  --shadow-md: 0 8px 32px rgba(163, 150, 138, 0.12);
-  --shadow-lg: 0 16px 48px rgba(163, 150, 138, 0.16);
+  /* Soft Ambient Shadows (Sits on desktop, warm tone) */
+  --shadow-sm: 0 8px 12px -2px rgba(163, 150, 138, 0.15);
+  --shadow-md: 0 16px 24px -4px rgba(163, 150, 138, 0.2);
+  --shadow-lg: 0 24px 40px -6px rgba(163, 150, 138, 0.25);
 
   /* Typography */
   --font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;

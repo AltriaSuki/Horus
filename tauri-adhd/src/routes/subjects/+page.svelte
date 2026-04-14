@@ -63,13 +63,16 @@
     <div class="empty-state animate-fade-in">
       <div class="empty-illustration">
         <svg width="120" height="120" viewBox="0 0 120 120" fill="none">
-          <circle cx="60" cy="60" r="56" fill="#FFF0E0" stroke="var(--primary-light)" stroke-width="2" />
-          <circle cx="60" cy="42" r="16" fill="var(--primary-light)" />
-          <path d="M35 85c0-13.8 11.2-25 25-25s25 11.2 25 25" fill="var(--primary-light)" />
-          <circle cx="60" cy="42" r="12" fill="var(--tertiary)" />
-          <circle cx="55" cy="40" r="2" fill="var(--text)" />
-          <circle cx="65" cy="40" r="2" fill="var(--text)" />
-          <path d="M56 47c0 0 2 3 4 3s4-3 4-3" stroke="var(--text)" stroke-width="1.5" stroke-linecap="round" fill="none" />
+          <circle cx="60" cy="60" r="50" fill="rgba(255,255,255,0.4)" />
+          <!-- Head -->
+          <circle cx="60" cy="45" r="18" fill="var(--primary)"/>
+          <path d="M44 45 Q 60 20 76 45" fill="var(--primary-dark)"/>
+          <!-- Face details -->
+          <circle cx="53" cy="48" r="3" fill="white"/>
+          <circle cx="67" cy="48" r="3" fill="white"/>
+          <path d="M56 54 Q 60 58 64 54" stroke="white" stroke-width="3" stroke-linecap="round" fill="none"/>
+          <!-- Body -->
+          <path d="M35 85 C35 70 45 62 60 62 C75 62 85 70 85 85" fill="var(--primary)"/>
         </svg>
       </div>
       <h2 class="empty-title">还没有被试</h2>

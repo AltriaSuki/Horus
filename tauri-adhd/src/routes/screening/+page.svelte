@@ -60,14 +60,18 @@
   <!-- Hero card -->
   <div class="hero-card animate-fade-in">
     <div class="hero-bg">
-      <svg class="hero-icon" width="64" height="64" viewBox="0 0 64 64" fill="none">
-        <circle cx="32" cy="32" r="28" fill="rgba(255,255,255,0.15)" />
-        <circle cx="32" cy="32" r="16" fill="rgba(255,255,255,0.2)" />
-        <circle cx="32" cy="32" r="6" fill="white" />
-        <line x1="32" y1="10" x2="32" y2="22" stroke="white" stroke-width="2" opacity="0.5" />
-        <line x1="32" y1="42" x2="32" y2="54" stroke="white" stroke-width="2" opacity="0.5" />
-        <line x1="10" y1="32" x2="22" y2="32" stroke="white" stroke-width="2" opacity="0.5" />
-        <line x1="42" y1="32" x2="54" y2="32" stroke="white" stroke-width="2" opacity="0.5" />
+      <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
+        <!-- Glowing Background -->
+        <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
+        <!-- Rocket Body -->
+        <path d="M40 15C40 15 25 35 25 55C25 60 30 65 40 65C50 65 55 60 55 55C55 35 40 15 40 15Z" fill="white"/>
+        <!-- Window -->
+        <circle cx="40" cy="40" r="6" fill="var(--primary-dark)"/>
+        <!-- Fins -->
+        <path d="M25 55L15 65H30L25 55Z" fill="white"/>
+        <path d="M55 55L65 65H50L55 55Z" fill="white"/>
+        <!-- Flame -->
+        <path d="M35 65 Q40 75 45 65 Z" fill="#FFE699"/>
       </svg>
     </div>
     <h1 class="hero-title">视觉记忆挑战</h1>
@@ -154,7 +158,7 @@
     position: relative;
     overflow: hidden;
     margin-bottom: var(--space-xl);
-    box-shadow: 0 16px 32px rgba(255, 140, 115, 0.2);
+    box-shadow: var(--shadow-lg);
     border: 4px solid rgba(255, 255, 255, 0.4);
   }
   .hero-bg {

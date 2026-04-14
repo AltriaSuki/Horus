@@ -37,6 +37,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_health,
+            commands::check_camera_permission,
             commands::create_subject,
             commands::list_subjects,
             commands::start_screening,

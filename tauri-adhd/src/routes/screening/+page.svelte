@@ -13,8 +13,11 @@
   let subjects = $state([]);
   let selectedSubjectId = $state('');
   let loading = $state(false);
+  let loadingMsg = $state('');
   let error = $state(null);
   let loadingSubjects = $state(true);
+  // 'idle' | 'permission' — show camera permission explanation modal
+  let stage = $state('idle');
 
   onMount(async () => {
     try {
@@ -29,14 +32,28 @@
     }
   });
 
-  async function startScreening() {
+  function requestStart() {
     if (!selectedSubjectId) return;
+    error = null;
+    stage = 'permission';
+  }
 
+  function cancelStart() {
+    stage = 'idle';
+    error = null;
+  }
+
+  async function confirmAndStart() {
     loading = true;
     error = null;
+    loadingMsg = '正在检查摄像头权限...';
     try {
-      resetSession();
+      // 1) 先探测摄像头权限（首次会弹出系统授权对话框）
+      await invoke('check_camera_permission');
 
+      // 2) 正式启动早筛
+      loadingMsg = '正在启动筛查...';
+      resetSession();
       const session = await invoke('start_screening', {
         subjectId: selectedSubjectId,
         screenWidth: window.innerWidth,
@@ -51,10 +68,12 @@
       goto('/screening/running');
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
-      error = '启动筛查失败: ' + msg;
+      error = msg;
       console.error(e);
+      // 留在 permission 阶段，让用户看到错误并选择重试/取消
     } finally {
       loading = false;
+      loadingMsg = '';
     }
   }
 
@@ -132,25 +151,60 @@
     {/if}
   </div>
 
-  {#if error}
+  {#if error && stage === 'idle'}
     <div class="error-msg animate-fade-in">{error}</div>
   {/if}
 
   <!-- Start button -->
   <div class="start-section">
-    <button class="btn-primary start-btn" onclick={startScreening} disabled={!canStart}>
-      {#if loading}
-        <div class="btn-spinner"></div>
-        准备中...
-      {:else}
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <polygon points="5,3 19,12 5,21" fill="currentColor" stroke="none" />
-        </svg>
-        开始闯关
-      {/if}
+    <button class="btn-primary start-btn" onclick={requestStart} disabled={!canStart}>
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5,3 19,12 5,21" fill="currentColor" stroke="none" />
+      </svg>
+      开始闯关
     </button>
   </div>
 </div>
+
+{#if stage === 'permission'}
+  <div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="perm-title">
+    <div class="modal-card animate-fade-in">
+      <div class="modal-icon">
+        <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 7l-7 5 7 5V7z" />
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+        </svg>
+      </div>
+      <h2 id="perm-title" class="modal-title">需要摄像头权限</h2>
+      <p class="modal-body">
+        本应用需要访问摄像头来跟踪你的眼睛运动，用于注意力评估。
+        <br /><br />
+        摄像头画面<strong>只在本机处理</strong>，不会上传到任何服务器，也不会被保存。
+      </p>
+
+      {#if error}
+        <div class="modal-error">
+          <strong>无法访问摄像头</strong>
+          <pre>{error}</pre>
+        </div>
+      {/if}
+
+      {#if loading}
+        <div class="modal-loading">
+          <div class="btn-spinner"></div>
+          <span>{loadingMsg}</span>
+        </div>
+      {:else}
+        <div class="modal-actions">
+          <button class="btn-ghost" onclick={cancelStart}>取消</button>
+          <button class="btn-primary" onclick={confirmAndStart}>
+            {error ? '重试' : '同意并开始'}
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
 
 <style>
   /* ── Hero card ─────────────────────────────────────────────── */
@@ -273,5 +327,103 @@
     background: #FFE0E0;
     border-radius: var(--radius-sm);
     margin-bottom: var(--space-md);
+  }
+
+  /* ── Permission modal ──────────────────────────────────────── */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(43, 24, 16, 0.55);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    padding: var(--space-md);
+  }
+  .modal-card {
+    background: var(--surface-solid, #FFF8F0);
+    border-radius: var(--radius-xl);
+    padding: var(--space-xl);
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.25);
+    border: 4px solid rgba(255, 140, 66, 0.3);
+    text-align: center;
+  }
+  .modal-icon {
+    width: 80px;
+    height: 80px;
+    margin: 0 auto var(--space-md);
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+  }
+  .modal-title {
+    font-size: var(--font-size-xl);
+    font-weight: 800;
+    color: var(--text);
+    margin-bottom: var(--space-md);
+  }
+  .modal-body {
+    font-size: var(--font-size-base);
+    color: var(--text-muted);
+    line-height: 1.6;
+    text-align: left;
+    margin-bottom: var(--space-md);
+  }
+  .modal-body strong {
+    color: var(--primary-dark);
+  }
+  .modal-error {
+    background: #FFE0E0;
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+    margin-bottom: var(--space-md);
+    text-align: left;
+  }
+  .modal-error strong {
+    display: block;
+    color: var(--error);
+    margin-bottom: 4px;
+  }
+  .modal-error pre {
+    font-size: var(--font-size-sm);
+    color: var(--text);
+    white-space: pre-wrap;
+    word-break: break-word;
+    margin: 0;
+    font-family: inherit;
+  }
+  .modal-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    color: var(--text-muted);
+    padding: var(--space-md) 0;
+  }
+  .modal-actions {
+    display: flex;
+    gap: var(--space-md);
+    justify-content: center;
+  }
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 2px solid rgba(0, 0, 0, 0.1);
+    padding: 10px 24px;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    font-size: var(--font-size-base);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .btn-ghost:hover {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.2);
   }
 </style>

@@ -67,25 +67,52 @@ impl CameraCapture {
         let handle = thread::Builder::new()
             .name("camera-capture".into())
             .spawn(move || {
-                // Open camera inside the thread (Camera is !Send)
+                // Open camera inside the thread (Camera is !Send).
+                // Try multiple formats because different webcams support different
+                // codec/resolution/fps combinations; MJPEG is not universal.
                 let index = CameraIndex::Index(camera_index);
-                let requested =
-                    RequestedFormat::new::<RgbFormat>(RequestedFormatType::Closest(
-                        nokhwa::utils::CameraFormat::new_from(
-                            width,
-                            height,
-                            FrameFormat::MJPEG,
-                            fps,
-                        ),
-                    ));
+                let attempts: Vec<(&str, RequestedFormat)> = vec![
+                    ("MJPEG exact", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
+                            width, height, FrameFormat::MJPEG, fps,
+                        )))),
+                    ("YUYV exact", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
+                            width, height, FrameFormat::YUYV, fps,
+                        )))),
+                    ("NV12 exact", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
+                            width, height, FrameFormat::NV12, fps,
+                        )))),
+                    ("highest frame rate", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::AbsoluteHighestFrameRate)),
+                    ("highest resolution", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::AbsoluteHighestResolution)),
+                ];
 
-                let mut cam = match Camera::new(index, requested) {
-                    Ok(c) => c,
-                    Err(e) => {
+                let mut last_err: Option<String> = None;
+                let mut cam: Option<Camera> = None;
+                for (label, req) in attempts {
+                    match Camera::new(index.clone(), req) {
+                        Ok(c) => {
+                            log::info!("Camera opened via fallback: {}", label);
+                            cam = Some(c);
+                            break;
+                        }
+                        Err(e) => {
+                            log::debug!("Camera format attempt '{}' failed: {}", label, e);
+                            last_err = Some(format!("{}: {}", label, e));
+                        }
+                    }
+                }
+
+                let mut cam = match cam {
+                    Some(c) => c,
+                    None => {
                         let _ = init_tx.send(Err(anyhow::anyhow!(
-                            "Failed to open camera index {}: {}",
+                            "Failed to open camera index {}. Last error: {}",
                             camera_index,
-                            e
+                            last_err.unwrap_or_else(|| "unknown".into())
                         )));
                         return;
                     }

@@ -191,13 +191,7 @@
 <style>
   /* Hero */
   .hero-card {
-    background-image: repeating-linear-gradient(
-      45deg,
-      rgba(255, 255, 255, 0.05),
-      rgba(255, 255, 255, 0.05) 20px,
-      transparent 20px,
-      transparent 40px
-    ), linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+    background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
     border-radius: var(--radius-xl);
     padding: var(--space-2xl) var(--space-lg);
     text-align: center;
@@ -206,7 +200,7 @@
     overflow: hidden;
     margin-bottom: var(--space-xl);
     box-shadow: var(--shadow-lg);
-    border: 4px solid #FFFFFF;
+    border: 4px solid rgba(255, 255, 255, 0.4);
   }
   .hero-bg {
     display: flex;

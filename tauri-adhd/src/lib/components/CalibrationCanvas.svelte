@@ -194,9 +194,8 @@
     if (bannerText && !showResult && currentPoint) {
       const bannerColor = mode === 'calibrating' ? '#FF8C42' : '#4ECDC4';
       const bannerWidth = Math.min(440, w - 60);
-      // Place banner on the opposite side of the screen from the target
-      const targetInTopHalf = currentPoint.y < 0.5;
-      const bannerY = targetInTopHalf ? h - bannerH - 20 : 20;
+      // Fixed vertical position between rows to prevent overlapping and jumping (y = 80%)
+      const bannerY = h * 0.80 - bannerH / 2;
 
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
       roundRect(ctx, (w - bannerWidth) / 2, bannerY + 2, bannerWidth, bannerH, 24);
@@ -212,15 +211,7 @@
       ctx.fillText(bannerText, w / 2, bannerY + bannerH / 2);
     }
 
-    // ── ESC hint — also on opposite side, but smaller ───────────
-    if (currentPoint) {
-      const hintY = currentPoint.y < 0.5 ? h - 16 : 20;
-      ctx.fillStyle = 'rgba(255,248,240,0.25)';
-      ctx.font = '400 13px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.textAlign = 'right';
-      ctx.textBaseline = currentPoint.y < 0.5 ? 'bottom' : 'top';
-      ctx.fillText('按 ESC 退出', w - 16, hintY);
-    }
+    // ── ESC hint ─────────── (Removed, as it is merged into the Exit button below)
 
     // ── Content ─────────────────────────────────────────────────
     ctx.textAlign = 'center';
@@ -336,24 +327,13 @@
   class="calibration-canvas"
 ></canvas>
 
-<!-- Exit button — positioned dynamically to avoid the current target.
-     When the target is in the top-left quadrant, button goes to bottom-right, etc. -->
-{#if currentPoint}
-  <button
-    class="exit-btn"
-    class:exit-bottom-right={currentPoint.x < 0.5 && currentPoint.y < 0.5}
-    class:exit-bottom-left={currentPoint.x >= 0.5 && currentPoint.y < 0.5}
-    class:exit-top-right={currentPoint.x < 0.5 && currentPoint.y >= 0.5}
-    class:exit-top-left={currentPoint.x >= 0.5 && currentPoint.y >= 0.5}
-    onclick={() => { if (onCancel) onCancel(); }}
-  >
-    退出
-  </button>
-{:else}
-  <button class="exit-btn exit-top-left" onclick={() => { if (onCancel) onCancel(); }}>
-    退出
-  </button>
-{/if}
+<!-- Exit button — perfectly safe at the bottom right corner (no points map to this position) -->
+<button
+  class="exit-btn"
+  onclick={() => { if (onCancel) onCancel(); }}
+>
+  退出 (ESC)
+</button>
 
 <style>
   .calibration-canvas {
@@ -380,15 +360,12 @@
     cursor: pointer;
     backdrop-filter: blur(8px);
     transition: all 0.35s ease;
+    bottom: 20px;
+    right: 20px;
   }
   .exit-btn:hover {
     background: rgba(255, 140, 66, 0.3);
     color: #FFF8F0;
     border-color: #FF8C42;
   }
-  /* Dynamic positioning — always in the opposite corner from the target */
-  .exit-top-left     { top: 20px; left: 20px; }
-  .exit-top-right    { top: 20px; right: 20px; }
-  .exit-bottom-left  { bottom: 20px; left: 20px; }
-  .exit-bottom-right { bottom: 20px; right: 20px; }
 </style>

@@ -145,6 +145,11 @@ pub fn list_subjects() -> Result<Vec<storage::Subject>, String> {
 }
 
 #[tauri::command]
+pub fn delete_subject(subject_id: String) -> Result<(), String> {
+    storage::delete_subject(&subject_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
 pub fn start_screening(
     subject_id: String,
     screen_width: u32,

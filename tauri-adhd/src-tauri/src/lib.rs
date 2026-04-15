@@ -41,6 +41,7 @@ pub fn run() {
             commands::check_camera_permission,
             commands::create_subject,
             commands::list_subjects,
+            commands::delete_subject,
             commands::start_screening,
             commands::get_session,
             commands::get_report,

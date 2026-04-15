@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-adhd",
+  "productName": "Horus",
   "version": "0.1.0",
-  "identifier": "com.feilun.tauri-adhd",
+  "identifier": "com.feilun.horus",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-adhd",
+        "title": "Horus",
         "width": 800,
         "height": 600
       }

@@ -80,10 +80,12 @@
     launching = true;
     error = null;
     try {
-      const pid = await invoke('launch_game', { gamePath: 'training-game' });
+      // gamePath 留空 → 后端自动解析可执行文件位置
+      const pid = await invoke('launch_game', { gamePath: '' });
       gamePid = pid;
     } catch (e) {
-      error = '启动游戏失败: ' + e;
+      const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
+      error = msg;
       console.error(e);
     } finally {
       launching = false;
@@ -119,8 +121,7 @@
       </svg>
     </div>
     <h1 class="hero-title">注意力训练</h1>
-    <p class="hero-subtitle">通过互动游戏提升专注力与工作记忆</p>
-    <div class="coming-soon-badge">即将推出</div>
+    <p class="hero-subtitle">通过眼控互动游戏提升专注力与工作记忆</p>
   </div>
 
   <!-- Subject picker -->

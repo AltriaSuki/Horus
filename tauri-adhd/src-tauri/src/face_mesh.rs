@@ -101,7 +101,11 @@ fn crop_and_resize(
 
 pub struct FaceMeshDetector {
     face_detector: OnnxPlan,
-    face_landmarker: OnnxPlan,
+    /// Optional: MediaPipe face_landmark has TFLite CUSTOM ops that neither
+    /// tract-onnx nor tract-tflite can decode. When None, we synthesise the
+    /// 468 landmarks from the BlazeFace bbox (degraded precision, still
+    /// usable for iris tracking).
+    face_landmarker: Option<OnnxPlan>,
     iris_landmarker: OnnxPlan,
     anchors: Vec<[f32; 2]>,
 }
@@ -127,14 +131,26 @@ impl FaceMeshDetector {
         log::info!("Face detector loaded");
 
         // ── Face landmarker (FaceMesh 468-point) ─────────────────
-        // face_landmark.tflite — tract-onnx can also load TFLite files
-        // If tract cannot load TFLite directly, we fall back to an ONNX
-        // variant or load via proto. For now, try loading as ONNX first
-        // and if it fails, try reading as raw bytes.
+        // MediaPipe's face_landmark.tflite contains CUSTOM ops (flex delegate
+        // kernels) that neither tract-onnx nor tract-tflite can parse. If
+        // loading fails we continue WITHOUT face landmarks: iris tracking
+        // uses BlazeFace bbox-derived heuristic eye corners instead. Head
+        // pose / EAR are degraded but gaze ratios still work.
         let lm_path = models_dir.join("face_landmark.tflite");
-        let face_landmarker = Self::load_tflite_or_onnx(&lm_path, &[1, 192, 192, 3])
-            .with_context(|| format!("Loading {:?}", lm_path))?;
-        log::info!("Face landmarker loaded");
+        let face_landmarker = match Self::load_tflite_or_onnx(&lm_path, &[1, 192, 192, 3]) {
+            Ok(plan) => {
+                log::info!("Face landmarker loaded");
+                Some(plan)
+            }
+            Err(e) => {
+                log::warn!(
+                    "Face landmarker unavailable ({}). Falling back to bbox-heuristic landmarks; \
+                     head pose and EAR will be approximate.",
+                    e
+                );
+                None
+            }
+        };
 
         // ── Iris landmarker ──────────────────────────────────────
         let iris_path = models_dir.join("iris_landmark.onnx");
@@ -157,37 +173,34 @@ impl FaceMeshDetector {
         })
     }
 
-    /// Try loading a TFLite model via tract. tract-onnx's `model_for_path`
-    /// auto-detects format by extension. If .tflite is not natively supported
-    /// by the installed tract version, we fall back to reading as a flat-buffer
-    /// ONNX model (some projects convert tflite to onnx).
-    fn load_tflite_or_onnx(path: &Path, input_shape: &[usize]) -> Result<OnnxPlan> {
-        // First try: tract_onnx can handle some TFLite files natively
-        let result = tract_onnx::onnx()
-            .model_for_path(path)
-            .and_then(|model| {
-                let fact = InferenceFact::dt_shape(f32::datum_type(), input_shape);
-                model.with_input_fact(0, fact)
-            })
-            .and_then(|model| model.into_optimized())
-            .and_then(|model| model.into_runnable());
+    /// Load a MediaPipe TFLite model via tract-tflite. Falls back to an
+    /// .onnx sibling if the tflite path fails.
+    fn load_tflite_or_onnx(path: &Path, _input_shape: &[usize]) -> Result<OnnxPlan> {
+        // tract-tflite has its own loader; input shapes are embedded in the
+        // flat-buffer model so we don't need to specify them manually.
+        let tflite_result: Result<OnnxPlan> = (|| {
+            let plan = tract_tflite::tflite()
+                .model_for_path(path)
+                .with_context(|| format!("tract-tflite failed on {:?}", path))?
+                .into_optimized()?
+                .into_runnable()?;
+            Ok(plan)
+        })();
 
-        match result {
+        match tflite_result {
             Ok(plan) => Ok(plan),
             Err(e) => {
                 log::warn!(
-                    "Could not load {:?} directly: {}. Trying ONNX variant...",
-                    path,
-                    e
+                    "tract-tflite could not load {:?}: {}. Trying .onnx sibling...",
+                    path, e
                 );
-                // Fallback: look for an .onnx version next to the .tflite
                 let onnx_path = path.with_extension("onnx");
                 if onnx_path.exists() {
                     let plan = tract_onnx::onnx()
                         .model_for_path(&onnx_path)?
                         .with_input_fact(
                             0,
-                            InferenceFact::dt_shape(f32::datum_type(), input_shape),
+                            InferenceFact::dt_shape(f32::datum_type(), _input_shape),
                         )?
                         .into_optimized()?
                         .into_runnable()?;
@@ -211,7 +224,10 @@ impl FaceMeshDetector {
         let face_rect = self.detect_face(&img)?;
 
         // ── Stage 2: Face landmarks ──────────────────────────────
-        let mut landmarks = self.detect_landmarks(&img, &face_rect)?;
+        let mut landmarks = match &self.face_landmarker {
+            Some(_) => self.detect_landmarks(&img, &face_rect)?,
+            None => synthesize_landmarks_from_bbox(&face_rect, width as f32, height as f32),
+        };
 
         // ── Stage 3: Iris refinement ─────────────────────────────
         self.refine_iris(&img, &mut landmarks);
@@ -352,7 +368,7 @@ impl FaceMeshDetector {
         }
 
         let input_tv: TValue = input.into_tensor().into();
-        let outputs = self.face_landmarker.run(tvec![input_tv]).ok()?;
+        let outputs = self.face_landmarker.as_ref()?.run(tvec![input_tv]).ok()?;
 
         if outputs.is_empty() {
             log::warn!("Face landmarker returned no outputs");
@@ -506,6 +522,44 @@ impl FaceMeshDetector {
 
         Some(pts)
     }
+}
+
+/// Fallback when face_landmark.tflite cannot load: produce a 468-length
+/// landmark vector with approximate positions derived from the BlazeFace
+/// bounding box. Only the MediaPipe indices that downstream code actually
+/// reads (1, 10, 33, 133, 152, 234, 263, 362, 454) are placed meaningfully;
+/// the rest are zero-filled.
+fn synthesize_landmarks_from_bbox(bbox: &Rect, img_w: f32, img_h: f32) -> Vec<Landmark> {
+    let mut lm = vec![Landmark { x: 0.0, y: 0.0 }; 468];
+
+    // Normalised bbox center + spans
+    let cx = (bbox.x + bbox.w / 2.0) / img_w;
+    let cy = (bbox.y + bbox.h / 2.0) / img_h;
+    let fw = bbox.w / img_w;
+    let fh = bbox.h / img_h;
+
+    // Rough anthropometric ratios within a face bbox (MediaPipe-ish)
+    let eye_y = cy - 0.10 * fh;            // eyes sit ~10% above bbox center
+    let eye_half_span = 0.20 * fw;         // each eye ~20% of face width from center
+    let eye_radius = 0.08 * fw;            // inner→outer corner half-width
+
+    let right_eye_cx = cx - eye_half_span; // anatomical right = image left
+    let left_eye_cx  = cx + eye_half_span;
+
+    // Eye corners (anatomical convention matching gaze_math.rs)
+    lm[33]  = Landmark { x: right_eye_cx - eye_radius, y: eye_y }; // right outer
+    lm[133] = Landmark { x: right_eye_cx + eye_radius, y: eye_y }; // right inner
+    lm[362] = Landmark { x: left_eye_cx  - eye_radius, y: eye_y }; // left inner
+    lm[263] = Landmark { x: left_eye_cx  + eye_radius, y: eye_y }; // left outer
+
+    // Face structural points used for head pose estimation
+    lm[1]   = Landmark { x: cx,                          y: cy + 0.05 * fh }; // nose tip
+    lm[10]  = Landmark { x: cx,                          y: cy - 0.45 * fh }; // forehead
+    lm[152] = Landmark { x: cx,                          y: cy + 0.45 * fh }; // chin
+    lm[234] = Landmark { x: cx - 0.45 * fw,              y: cy };             // left cheek (image)
+    lm[454] = Landmark { x: cx + 0.45 * fw,              y: cy };             // right cheek (image)
+
+    lm
 }
 
 /// Estimate the centre of an eye from two corner landmarks.

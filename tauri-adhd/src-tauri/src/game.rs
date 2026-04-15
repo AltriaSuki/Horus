@@ -4,11 +4,43 @@
 //! to it via JSON lines written to stdin.
 
 use std::io::Write;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
 
 use crate::gaze_math::GazeFrame;
+
+/// Locate the Unity game executable across dev and release environments.
+/// Returns the first path that exists, or None if the game is not bundled.
+pub fn resolve_game_exe() -> Option<PathBuf> {
+    let exe_name = if cfg!(target_os = "windows") { "eye.exe" } else { "eye.exe" };
+
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let candidates = [
+        // Bundled alongside the app binary (release)
+        exe_dir.join("games").join("eyetrack").join(exe_name),
+        exe_dir.join("..").join("Resources").join("games").join("eyetrack").join(exe_name),
+        // Relative to src-tauri (dev mode)
+        PathBuf::from("../games/eyetrack").join(exe_name),
+        PathBuf::from("../../eyetrack package").join(exe_name),
+        // Absolute fallback for the current workstation (dev)
+        PathBuf::from("/Users/feilun/coding/login/eyetrack package").join(exe_name),
+    ];
+
+    for c in &candidates {
+        if c.exists() {
+            log::info!("Found game exe at {:?}", c);
+            return Some(c.clone());
+        }
+    }
+    log::warn!("Game exe '{}' not found in any candidate path", exe_name);
+    None
+}
 
 // ═══════════════════════════════════════════════════════════════════
 // GameManager

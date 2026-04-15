@@ -2,7 +2,7 @@
 //!
 //! Each `#[tauri::command]` function is callable from JS via `invoke('name', {...})`.
 
-use crate::{camera, inference, pipeline, storage};
+use crate::{camera, game, inference, pipeline, storage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -449,26 +449,58 @@ pub fn cancel_screening(session_id: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Launch the Unity game as a subprocess.
+// Global handle for the running Unity game. Separate from SESSION because
+// a game run is independent of a screening session.
+static GAME: once_cell::sync::Lazy<Mutex<Option<game::GameManager>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+/// Launch the Unity game as a subprocess. game_path is optional — if empty,
+/// the backend resolves it via game::resolve_game_exe().
 #[tauri::command]
 pub fn launch_game(game_path: String) -> Result<u32, String> {
-    use crate::game::GameManager;
-    match GameManager::launch(&game_path) {
+    // 先停掉可能残留的旧进程
+    if let Some(mut old) = GAME.lock().take() {
+        let _ = old.stop();
+    }
+
+    // 解析可执行文件：前端传空字符串或占位符 → 后端自动搜索
+    let exe = if game_path.is_empty() || game_path == "training-game" {
+        game::resolve_game_exe()
+            .ok_or_else(|| "未找到游戏可执行文件。请确保 eye.exe 已打包到应用目录。".to_string())?
+    } else {
+        std::path::PathBuf::from(&game_path)
+    };
+
+    // Windows exe 在 macOS/Linux 上无法原生执行 — 给明确提示
+    if !cfg!(target_os = "windows") && exe.extension().map(|e| e == "exe").unwrap_or(false) {
+        return Err(format!(
+            "训练游戏目前仅支持 Windows。请在 Windows 电脑上打开本应用。\n(检测到游戏: {:?})",
+            exe.file_name().unwrap_or_default()
+        ));
+    }
+
+    let exe_str = exe
+        .to_str()
+        .ok_or_else(|| "游戏路径包含非法字符".to_string())?;
+
+    match game::GameManager::launch(exe_str) {
         Ok(gm) => {
             let pid = gm.pid().unwrap_or(0);
             log::info!("Game launched (pid={})", pid);
-            // TODO: 存 GameManager 到全局 state，以便 stop_game 调用 .stop()
+            *GAME.lock() = Some(gm);
             Ok(pid)
         }
-        Err(e) => Err(format!("Failed to launch game: {}", e)),
+        Err(e) => Err(format!("启动游戏失败: {}", e)),
     }
 }
 
 #[tauri::command]
 pub fn stop_game() -> Result<(), String> {
-    // TODO: 未实现 — launch_game 目前没把 GameManager 保存到 state，
-    // 所以这里没有句柄可 .stop()。需先把 GameManager 放入 SESSION（或独立
-    // 的 GAME 静态变量）后再接线。
+    let mut slot = GAME.lock();
+    if let Some(mut gm) = slot.take() {
+        gm.stop().map_err(|e| format!("停止游戏失败: {}", e))?;
+        log::info!("Game stopped");
+    }
     Ok(())
 }
 

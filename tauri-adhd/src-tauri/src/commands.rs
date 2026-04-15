@@ -6,7 +6,7 @@ use crate::{camera, eye_tracker_server, game, inference, pipeline, storage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 
 // ═══════════════════════════════════════════════════════════════════
 // Global session state — shared between commands
@@ -54,6 +54,29 @@ fn shutdown_gaze_thread() {
     if let Some(h) = handle {
         let _ = h.join();
     }
+}
+
+/// Called from lib.rs on RunEvent::Exit to release all hardware resources.
+pub fn cleanup_on_exit() {
+    // 1. Stop Python eye tracker subprocess (releases its camera)
+    stop_eye_tracker_inner();
+
+    // 2. Stop gaze streaming thread
+    shutdown_gaze_thread();
+
+    // 3. Release Rust camera and pipeline
+    {
+        let mut state = SESSION.lock();
+        state.camera = None;
+        state.pipeline = None;
+    }
+
+    // 4. Stop TCP eye server if running
+    if let Some(mut srv) = EYE_SERVER.lock().take() {
+        srv.stop();
+    }
+
+    log::info!("Cleanup complete — camera and subprocesses released");
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -131,6 +154,9 @@ pub fn start_screening(
     // 若之前的 session 线程还在跑（异常路径或重复调用），先优雅停止
     shutdown_gaze_thread();
 
+    // 停止 Python 眼动追踪进程（如果之前训练时启动过），释放摄像头
+    stop_eye_tracker_inner();
+
     let session_id = uuid::Uuid::new_v4().to_string();
     let session = storage::create_session(&session_id, &subject_id, "screening", "sternberg")
         .map_err(|e| e.to_string())?;
@@ -157,30 +183,10 @@ pub fn start_screening(
         state.streaming = false;
         state.current_session_id = Some(session_id.clone());
 
-        // Resolve models directory relative to the executable
-        // In dev mode: src-tauri/ is cwd, ../models/ works
-        // In release: use the resource dir or exe dir
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        // Try multiple candidate paths
-        let candidates = [
-            exe_dir.join("models"),
-            exe_dir.join("../models"),
-            exe_dir.join("../../models"),
-            exe_dir.join("../Resources/models"),  // macOS .app bundle
-            PathBuf::from("../models"),            // dev mode
-            PathBuf::from("models"),
-        ];
-        for c in &candidates {
-            if c.join("rf_model.json").exists() {
-                state.models_dir = c.clone();
-                log::info!("Models dir: {:?}", c);
-                break;
-            }
-        }
+        state.models_dir = resolve_models_dir(Some(&app)).ok_or_else(|| {
+            "未找到 models 资源目录，请确认安装包包含模型文件。".to_string()
+        })?;
+        log::info!("Models dir: {:?}", state.models_dir);
 
         // Pipeline 初始化失败直接中止：没有 pipeline 则 gaze_frame 永远出不来
         match pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height) {
@@ -198,7 +204,7 @@ pub fn start_screening(
         }
 
         // 摄像头同样不可缺少
-        match camera::CameraCapture::start_with(0, 640, 480, 30) {
+        match camera::CameraCapture::start_with(0, 640, 480, 40) {
             Ok(cam) => {
                 state.camera = Some(cam);
                 log::info!("Camera started");
@@ -310,8 +316,22 @@ pub fn list_subject_sessions(subject_id: String) -> Result<Vec<storage::SessionR
     storage::list_subject_sessions(&subject_id).map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub fn delete_session(session_id: String) -> Result<(), String> {
+    storage::delete_session(&session_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_sessions(session_ids: Vec<String>) -> Result<(), String> {
+    for id in session_ids {
+        storage::delete_session(&id).map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Called by the Svelte frontend once per calibration point click.
 /// 后端从 pipeline 拉取当前最新的 8D 虹膜特征，避免前端传入坐标空间错位的数据。
+/// Deduplicates: skips if feature is identical to the last saved sample for this screen position.
 #[tauri::command]
 pub fn submit_calibration_sample(
     screen_x: f64,
@@ -324,10 +344,19 @@ pub fn submit_calibration_sample(
         None => return Err("未检测到人脸，请调整位置".into()),
     };
 
+    // Deduplicate: skip if this is the exact same feature as the last sample
+    // (happens at 1fps camera + 200ms submit interval → many repeats per frame)
+    if let Some((last_feat, _)) = state.calibration_samples.last() {
+        if *last_feat == feat {
+            return Ok(()); // silently skip duplicate
+        }
+    }
+
     state.calibration_samples.push((feat, [screen_x, screen_y]));
     log::info!(
-        "Calibration sample {}: screen=({:.0}, {:.0}) feat=[{:.3}, {:.3}, ...]",
-        state.calibration_samples.len(), screen_x, screen_y, feat[0], feat[1]
+        "Calibration sample {}: screen=({:.0}, {:.0}) feat=[{:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}, {:.3}]",
+        state.calibration_samples.len(), screen_x, screen_y,
+        feat[0], feat[1], feat[2], feat[3], feat[4], feat[5], feat[6], feat[7]
     );
     Ok(())
 }
@@ -342,13 +371,38 @@ pub fn finish_calibration() -> Result<f64, String> {
         return Err(format!("Not enough calibration points: {} (need >= 5)", n));
     }
 
-    // Collect data first, then borrow pipeline mutably (avoids Rust borrow conflict)
+    // Log feature statistics for diagnostics
     let x_rows: Vec<[f64; 8]> = state.calibration_samples.iter().map(|(f, _)| *f).collect();
     let y_rows: Vec<[f64; 2]> = state.calibration_samples.iter().map(|(_, s)| *s).collect();
 
+    // Log feature ranges to check if features actually vary
+    let mut mins = [f64::MAX; 8];
+    let mut maxs = [f64::MIN; 8];
+    for row in &x_rows {
+        for j in 0..8 {
+            mins[j] = mins[j].min(row[j]);
+            maxs[j] = maxs[j].max(row[j]);
+        }
+    }
+    log::info!("Calibration {} samples, feature ranges:", n);
+    let labels = ["iris_r_u", "iris_r_n", "iris_l_u", "iris_l_n", "yaw", "pitch", "affnet_x", "affnet_y"];
+    for j in 0..8 {
+        log::info!("  {}: [{:.4}, {:.4}] (range={:.4})", labels[j], mins[j], maxs[j], maxs[j] - mins[j]);
+    }
+
     if let Some(pipe) = &mut state.pipeline {
-        pipe.calibrate(&x_rows, &y_rows, 1.0);
-        log::info!("Ridge calibration fitted with {} points", n);
+        pipe.calibrate(&x_rows, &y_rows, 0.1);
+        log::info!("Ridge calibration fitted with {} unique points (alpha=0.1)", n);
+
+        // Compute training error for diagnostics
+        let mut total_err = 0.0;
+        for i in 0..n {
+            let (px, py) = pipe.predict_raw(&x_rows[i]);
+            let err = ((px - y_rows[i][0]).powi(2) + (py - y_rows[i][1]).powi(2)).sqrt();
+            total_err += err;
+        }
+        let train_err = total_err / n as f64;
+        log::info!("Ridge training mean error: {:.1} px", train_err);
     }
 
     // Return placeholder mean error (real error would require prediction + comparison)
@@ -463,6 +517,181 @@ static GAME: once_cell::sync::Lazy<Mutex<Option<game::GameManager>>> =
 static EYE_SERVER: once_cell::sync::Lazy<Mutex<Option<eye_tracker_server::EyeTrackerServer>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
+// ═══════════════════════════════════════════════════════════════════
+// Python eye_tracker_server.py subprocess management
+// ═══════════════════════════════════════════════════════════════════
+
+/// Global handle for the Python eye tracker subprocess.
+static PYTHON_EYE_TRACKER: once_cell::sync::Lazy<Mutex<Option<std::process::Child>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+/// Stdin handle for sending commands to the Python process (headless mode).
+static PYTHON_EYE_TRACKER_STDIN: once_cell::sync::Lazy<Mutex<Option<std::process::ChildStdin>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+/// Whether the Python eye tracker has completed calibration.
+static EYE_TRACKER_CALIBRATED: once_cell::sync::Lazy<Mutex<bool>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(false));
+
+/// Check whether the Python eye tracker subprocess is still alive.
+fn is_python_eye_tracker_running() -> bool {
+    let mut guard = PYTHON_EYE_TRACKER.lock();
+    if let Some(ref mut child) = *guard {
+        match child.try_wait() {
+            Ok(None) => true,
+            _ => {
+                *guard = None;
+                false
+            }
+        }
+    } else {
+        false
+    }
+}
+
+/// Collect base directories to probe for bundled resources in both dev and release.
+fn resource_base_dirs(app: Option<&AppHandle>) -> Vec<PathBuf> {
+    let mut bases: Vec<PathBuf> = Vec::new();
+
+    if let Some(app) = app {
+        if let Ok(resource_dir) = app.path().resource_dir() {
+            bases.push(resource_dir.clone());
+            bases.push(resource_dir.join("resources"));
+        }
+    }
+
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            bases.push(dir.to_path_buf());
+        }
+    }
+
+    // Dev-mode fallbacks
+    bases.push(PathBuf::from("."));
+    bases.push(PathBuf::from(".."));
+    bases.push(PathBuf::from("../.."));
+
+    bases
+}
+
+/// Locate the models directory across release resources and dev paths.
+fn resolve_models_dir(app: Option<&AppHandle>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for base in resource_base_dirs(app) {
+        candidates.push(base.join("models"));
+        candidates.push(base.join("resources").join("models"));
+        candidates.push(base.join("..").join("models"));
+        candidates.push(base.join("..").join("..").join("models"));
+    }
+
+    for c in candidates {
+        if c.join("face_detection.onnx").exists() && c.join("rf_model.json").exists() {
+            log::info!("Resolved models dir: {:?}", c);
+            return Some(c);
+        }
+    }
+
+    log::warn!("Could not resolve models directory (face_detection.onnx + rf_model.json)");
+    None
+}
+
+/// Locate eye_tracker_server.py across dev and release candidate paths.
+fn resolve_eye_tracker_script(app: Option<&AppHandle>) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    for base in resource_base_dirs(app) {
+        candidates.push(base.join("scripts").join("eye_tracker_server.py"));
+        candidates.push(base.join("resources").join("scripts").join("eye_tracker_server.py"));
+        candidates.push(base.join("..").join("scripts").join("eye_tracker_server.py"));
+        candidates.push(base.join("..").join("..").join("scripts").join("eye_tracker_server.py"));
+    }
+
+    for c in candidates {
+        if c.exists() {
+            log::info!("Found eye_tracker_server.py at {:?}", c);
+            return Some(c);
+        }
+    }
+    log::warn!("eye_tracker_server.py not found in any candidate path");
+    None
+}
+
+/// Find a working Python 3 interpreter. Searches common install locations
+/// on Windows since the Windows Store stub `python.exe` doesn't actually work.
+fn resolve_python() -> Option<PathBuf> {
+    // 1. Search common Windows install locations FIRST (avoid Windows Store stub)
+    if cfg!(target_os = "windows") {
+        if let Ok(user_profile) = std::env::var("USERPROFILE") {
+            let user = PathBuf::from(&user_profile);
+            // Python official installer (prefer latest version)
+            if let Ok(entries) = std::fs::read_dir(user.join("AppData\\Local\\Programs\\Python")) {
+                let mut pythons: Vec<PathBuf> = entries
+                    .filter_map(|e| e.ok())
+                    .map(|e| e.path().join("python.exe"))
+                    .filter(|p| p.exists())
+                    .collect();
+                pythons.sort();
+                if let Some(p) = pythons.last() {
+                    log::info!("Found Python at {:?}", p);
+                    return Some(p.clone());
+                }
+            }
+            // Anaconda / Miniconda
+            for name in &["anaconda3", "miniconda3", "Anaconda3", "Miniconda3"] {
+                let p = user.join(name).join("python.exe");
+                if p.exists() {
+                    log::info!("Found Python at {:?}", p);
+                    return Some(p);
+                }
+            }
+        }
+        // System-wide Python
+        for p in &[
+            "C:\\Python312\\python.exe",
+            "C:\\Python311\\python.exe",
+            "C:\\Python310\\python.exe",
+            "C:\\ProgramData\\anaconda3\\python.exe",
+            "C:\\ProgramData\\miniconda3\\python.exe",
+        ] {
+            let path = PathBuf::from(p);
+            if path.exists() {
+                log::info!("Found Python at {:?}", path);
+                return Some(path);
+            }
+        }
+    }
+
+    // 2. Fallback: try PATH commands (works on macOS/Linux)
+    for cmd in &["python3", "python"] {
+        if let Ok(output) = std::process::Command::new(cmd)
+            .arg("--version")
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()
+        {
+            let ver = String::from_utf8_lossy(&output.stdout);
+            if output.status.success() && ver.contains("Python 3") {
+                log::info!("Found Python via PATH: {} → {}", cmd, ver.trim());
+                return Some(PathBuf::from(cmd));
+            }
+        }
+    }
+
+    log::warn!("No working Python 3 found");
+    None
+}
+
+/// Internal: kill the Python eye tracker process and reset state.
+fn stop_eye_tracker_inner() {
+    // Drop stdin first so the process can detect EOF
+    PYTHON_EYE_TRACKER_STDIN.lock().take();
+    if let Some(mut child) = PYTHON_EYE_TRACKER.lock().take() {
+        let _ = child.kill();
+        let _ = child.wait();
+        log::info!("Python eye tracker process stopped");
+    }
+    *EYE_TRACKER_CALIBRATED.lock() = false;
+}
+
 /// True when the current gaze stream was started by `launch_game` rather
 /// than by `start_screening`. Lets `stop_game` know to tear down the camera
 /// too (screening keeps ownership when it started).
@@ -486,34 +715,18 @@ fn ensure_gaze_streaming_for_game(
         }
     }
 
-    // Resolve models_dir the same way start_screening does.
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-    let candidates = [
-        exe_dir.join("models"),
-        exe_dir.join("../models"),
-        exe_dir.join("../../models"),
-        exe_dir.join("../Resources/models"),
-        PathBuf::from("../models"),
-        PathBuf::from("models"),
-    ];
+    let models_dir = resolve_models_dir(Some(app))
+        .ok_or_else(|| "未找到 models 资源目录，请重新安装带完整资源的版本。".to_string())?;
 
     {
         let mut state = SESSION.lock();
         state.streaming = false;
-        for c in &candidates {
-            if c.join("rf_model.json").exists() {
-                state.models_dir = c.clone();
-                break;
-            }
-        }
+        state.models_dir = models_dir;
         let pipe = pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height)
             .map_err(|e| format!("Gaze pipeline 初始化失败: {}", e))?;
         state.pipeline = Some(pipe);
 
-        let cam = camera::CameraCapture::start_with(0, 640, 480, 30)
+        let cam = camera::CameraCapture::start_with(0, 640, 480, 40)
             .map_err(|e| classify_camera_error(&e.to_string()))?;
         state.camera = Some(cam);
     }
@@ -559,28 +772,36 @@ pub fn launch_game(
         ));
     }
 
-    // 启动 TCP server（幂等）
-    {
-        let mut slot = EYE_SERVER.lock();
-        if slot.is_none() {
-            let srv = eye_tracker_server::EyeTrackerServer::start(
-                eye_tracker_server::DEFAULT_HOST,
-                eye_tracker_server::DEFAULT_PORT,
-            )
-            .map_err(|e| format!("启动眼动 TCP server 失败: {}", e))?;
-            *slot = Some(srv);
-        }
-    }
+    // 如果 Python 眼动追踪器已经在运行（并且已完成校准），它自带 TCP server，
+    // 跳过 Rust 的 TCP server 和 gaze pipeline。
+    let python_eye_tracker_active = is_python_eye_tracker_running();
 
-    // 启动 camera/pipeline（如果还没跑）
-    let sw = screen_width.unwrap_or(1920);
-    let sh = screen_height.unwrap_or(1080);
-    if let Err(e) = ensure_gaze_streaming_for_game(sw, sh, &app) {
-        // 回滚 server
-        if let Some(mut srv) = EYE_SERVER.lock().take() {
-            srv.stop();
+    if python_eye_tracker_active {
+        log::info!("Python eye tracker is running; skipping Rust TCP server and gaze pipeline");
+    } else {
+        // 启动 Rust TCP server（幂等）
+        {
+            let mut slot = EYE_SERVER.lock();
+            if slot.is_none() {
+                let srv = eye_tracker_server::EyeTrackerServer::start(
+                    eye_tracker_server::DEFAULT_HOST,
+                    eye_tracker_server::DEFAULT_PORT,
+                )
+                .map_err(|e| format!("启动眼动 TCP server 失败: {}", e))?;
+                *slot = Some(srv);
+            }
         }
-        return Err(e);
+
+        // 启动 camera/pipeline（如果还没跑）
+        let sw = screen_width.unwrap_or(1920);
+        let sh = screen_height.unwrap_or(1080);
+        if let Err(e) = ensure_gaze_streaming_for_game(sw, sh, &app) {
+            // 回滚 server
+            if let Some(mut srv) = EYE_SERVER.lock().take() {
+                srv.stop();
+            }
+            return Err(e);
+        }
     }
 
     let exe_str = exe
@@ -607,7 +828,10 @@ pub fn stop_game() -> Result<(), String> {
         log::info!("Game stopped");
     }
 
-    // 停 TCP server
+    // 停 Python 眼动追踪器（如果在跑）
+    stop_eye_tracker_inner();
+
+    // 停 Rust TCP server（如果在跑）
     if let Some(mut srv) = EYE_SERVER.lock().take() {
         srv.stop();
     }
@@ -643,4 +867,224 @@ pub fn run_inference(
     report.attention_profile = inference::compute_attention_profile(&features);
     report.block_stats = inference::compute_block_stats(&trials);
     Ok(report)
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Python eye tracker commands
+// ═══════════════════════════════════════════════════════════════════
+
+/// Launch the Python eye_tracker_server.py subprocess.
+/// If `headless` is true, calibration is driven from the frontend via stdin commands.
+/// Otherwise it opens a pygame calibration window.
+/// Progress is emitted via `eye_tracker_status` and `eye_tracker_log` events.
+#[tauri::command]
+pub fn start_eye_tracker(app: AppHandle, headless: Option<bool>) -> Result<(), String> {
+    // Kill any existing instance
+    stop_eye_tracker_inner();
+
+    // 释放 Rust 端的摄像头/pipeline（如果早筛曾经启动过）
+    shutdown_gaze_thread();
+    {
+        let mut state = SESSION.lock();
+        state.camera = None;
+        state.pipeline = None;
+    }
+
+    let headless = headless.unwrap_or(false);
+
+    let script = resolve_eye_tracker_script(Some(&app))
+        .ok_or("未找到 eye_tracker_server.py 脚本。请确保 scripts/ 目录存在。")?;
+
+    let script_str = script
+        .canonicalize()
+        .unwrap_or(script)
+        .to_str()
+        .ok_or("脚本路径包含非法字符")?
+        .to_string();
+
+    let python = resolve_python()
+        .ok_or("未找到 Python。请安装 Python 3 并确保其路径可被系统找到。")?;
+
+    log::info!("Using Python: {:?}, script: {}, headless: {}", python, script_str, headless);
+
+    let mut cmd = std::process::Command::new(&python);
+    cmd.arg("-u")
+        .arg(&script_str)
+        .arg("--port")
+        .arg("5678")
+        .env("PYTHONUNBUFFERED", "1")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+
+    if headless {
+        cmd.arg("--headless")
+            .stdin(std::process::Stdio::piped());
+    }
+
+    let mut child = cmd.spawn()
+        .map_err(|e| format!("启动眼动追踪失败: {}。\nPython路径: {:?}", e, python))?;
+
+    let stdout = child.stdout.take()
+        .ok_or("无法获取 eye_tracker_server 的标准输出")?;
+    let stderr = child.stderr.take();
+
+    // Store stdin handle for headless mode
+    if headless {
+        *PYTHON_EYE_TRACKER_STDIN.lock() = child.stdin.take();
+    }
+
+    *PYTHON_EYE_TRACKER.lock() = Some(child);
+
+    // Monitor stdout for calibration progress
+    let app_clone = app.clone();
+    std::thread::Builder::new()
+        .name("eye-tracker-stdout".into())
+        .spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(stdout);
+            for line in reader.lines().flatten() {
+                log::info!("[eye_tracker] {}", line);
+                let _ = app_clone.emit("eye_tracker_log", &line);
+                if line.starts_with("READY") {
+                    let _ = app_clone.emit("eye_tracker_status", "ready");
+                }
+                if line.starts_with("POINT_DONE") {
+                    // POINT_DONE index n_samples target_samples
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    let index = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let samples = parts.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let target = parts.get(3).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let _ = app_clone.emit("eye_tracker_point_done", serde_json::json!({
+                        "index": index,
+                        "samples": samples,
+                        "target": target,
+                    }));
+                }
+                if line.starts_with("POINT_PROGRESS") {
+                    // POINT_PROGRESS index n_samples target_samples
+                    let parts: Vec<&str> = line.split_whitespace().collect();
+                    let index = parts.get(1).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let samples = parts.get(2).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let target = parts.get(3).and_then(|s| s.parse::<u32>().ok()).unwrap_or(0);
+                    let _ = app_clone.emit("eye_tracker_point_progress", serde_json::json!({
+                        "index": index,
+                        "samples": samples,
+                        "target": target,
+                    }));
+                }
+                if line.starts_with("TRAIN_DONE") {
+                    let acc = line.split_whitespace().nth(1)
+                        .and_then(|s| s.parse::<f64>().ok()).unwrap_or(0.0);
+                    *EYE_TRACKER_CALIBRATED.lock() = true;
+                    let _ = app_clone.emit("eye_tracker_train_done", serde_json::json!({
+                        "accuracy": acc,
+                    }));
+                    let _ = app_clone.emit("eye_tracker_status", "calibrated");
+                }
+                if line.starts_with("TRAIN_FAILED") {
+                    let reason = line.strip_prefix("TRAIN_FAILED ").unwrap_or("unknown");
+                    let _ = app_clone.emit("eye_tracker_train_failed", reason);
+                    let _ = app_clone.emit("eye_tracker_status", "error");
+                }
+                if line.contains("Calibration done") {
+                    *EYE_TRACKER_CALIBRATED.lock() = true;
+                    let _ = app_clone.emit("eye_tracker_status", "calibrated");
+                }
+                if line.contains("[Server] Listening") {
+                    let _ = app_clone.emit("eye_tracker_status", "serving");
+                }
+                if line.contains("[Fatal]") || line.contains("Calibration failed") {
+                    let _ = app_clone.emit("eye_tracker_status", "error");
+                }
+            }
+            let _ = app_clone.emit("eye_tracker_status", "stopped");
+            log::info!("eye_tracker stdout monitor exited");
+        })
+        .map_err(|e| format!("启动监控线程失败: {}", e))?;
+
+    // Monitor stderr
+    if let Some(stderr) = stderr {
+        let app_clone2 = app.clone();
+        std::thread::Builder::new()
+            .name("eye-tracker-stderr".into())
+            .spawn(move || {
+                use std::io::BufRead;
+                let reader = std::io::BufReader::new(stderr);
+                for line in reader.lines().flatten() {
+                    log::warn!("[eye_tracker stderr] {}", line);
+                    let _ = app_clone2.emit("eye_tracker_log", &format!("[ERR] {}", line));
+                }
+            })
+            .ok();
+    }
+
+    log::info!("Python eye tracker started (script: {})", script_str);
+    Ok(())
+}
+
+/// Stop the Python eye tracker subprocess.
+#[tauri::command]
+pub fn stop_eye_tracker() -> Result<(), String> {
+    stop_eye_tracker_inner();
+    Ok(())
+}
+
+/// Query the current status of the Python eye tracker.
+#[tauri::command]
+pub fn get_eye_tracker_status() -> String {
+    if is_python_eye_tracker_running() {
+        if *EYE_TRACKER_CALIBRATED.lock() {
+            "calibrated".into()
+        } else {
+            "calibrating".into()
+        }
+    } else {
+        "stopped".into()
+    }
+}
+
+/// Send a COLLECT command to the headless Python eye tracker to sample
+/// features at the given normalized screen position.
+#[tauri::command]
+pub fn eye_tracker_collect_point(x: f64, y: f64, label: String) -> Result<(), String> {
+    use std::io::Write;
+    let mut guard = PYTHON_EYE_TRACKER_STDIN.lock();
+    let stdin = guard.as_mut()
+        .ok_or("眼动追踪进程未运行或非 headless 模式")?;
+    let cmd = format!("COLLECT {} {} {}\n", x, y, label);
+    stdin.write_all(cmd.as_bytes())
+        .map_err(|e| format!("发送校准命令失败: {}", e))?;
+    stdin.flush()
+        .map_err(|e| format!("发送校准命令失败: {}", e))?;
+    Ok(())
+}
+
+/// Send a TRAIN command to the headless Python eye tracker to train the model.
+#[tauri::command]
+pub fn eye_tracker_train() -> Result<(), String> {
+    use std::io::Write;
+    let mut guard = PYTHON_EYE_TRACKER_STDIN.lock();
+    let stdin = guard.as_mut()
+        .ok_or("眼动追踪进程未运行或非 headless 模式")?;
+    stdin.write_all(b"TRAIN\n")
+        .map_err(|e| format!("发送训练命令失败: {}", e))?;
+    stdin.flush()
+        .map_err(|e| format!("发送训练命令失败: {}", e))?;
+    Ok(())
+}
+
+/// Send a SERVE command to the headless Python eye tracker to start the TCP server.
+#[tauri::command]
+pub fn eye_tracker_start_server() -> Result<(), String> {
+    use std::io::Write;
+    let mut guard = PYTHON_EYE_TRACKER_STDIN.lock();
+    let stdin = guard.as_mut()
+        .ok_or("眼动追踪进程未运行或非 headless 模式")?;
+    stdin.write_all(b"SERVE\n")
+        .map_err(|e| format!("发送服务命令失败: {}", e))?;
+    stdin.flush()
+        .map_err(|e| format!("发送服务命令失败: {}", e))?;
+    // Stdin no longer needed after SERVE (it blocks)
+    drop(guard);
+    Ok(())
 }

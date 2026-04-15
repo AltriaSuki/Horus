@@ -3,11 +3,12 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { invoke } from '@tauri-apps/api/core';
-  import { currentReport, TOTAL_TRIALS } from '$lib/stores/session.js';
+  import { currentReport, totalTrialsTarget } from '$lib/stores/session.js';
 
   let report = $state(null);
   let loading = $state(true);
   let error = $state(null);
+  let totalTrialsValue = $state(160);
 
   /** Feature friendly-name mapping */
   const featureNames = {
@@ -45,6 +46,10 @@
   }
 
   onMount(async () => {
+    const unsubTrials = totalTrialsTarget.subscribe((v) => {
+      totalTrialsValue = v;
+    });
+
     // First try from store (just completed)
     const unsub = currentReport.subscribe((r) => {
       if (r) report = r;
@@ -67,6 +72,7 @@
       }
     }
     loading = false;
+    unsubTrials();
   });
 
   // Risk color
@@ -190,7 +196,7 @@
       <div class="parent-card card">
         <h3 class="card-title parent-title">给家长的说明</h3>
         <div class="parent-content">
-          <p>本筛查基于 Sternberg 视觉工作记忆范式，通过分析孩子在 {TOTAL_TRIALS} 个试次中的反应时间、正确率、瞳孔变化和注视行为等 27 项指标，利用随机森林模型进行综合评估。</p>
+          <p>本筛查基于 Sternberg 视觉工作记忆范式，通过分析孩子在 {totalTrialsValue} 个试次中的反应时间、正确率、瞳孔变化和注视行为等 27 项指标，利用随机森林模型进行综合评估。</p>
           {#if report.prediction !== undefined}
             <div class="prediction-row">
               <span class="pred-label">模型预测:</span>

@@ -312,6 +312,20 @@ pub fn list_subject_sessions(subject_id: &str) -> anyhow::Result<Vec<SessionRow>
     Ok(rows)
 }
 
+/// Delete one screening session and all report/trial/calibration rows linked to it.
+pub fn delete_session(session_id: &str) -> anyhow::Result<()> {
+    let conn = db().lock().unwrap();
+    let tx = conn.unchecked_transaction()?;
+
+    tx.execute("DELETE FROM adhd_reports WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM trials WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM calibrations WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+
+    tx.commit()?;
+    Ok(())
+}
+
 // ─── Trial-level persistence ────────────────────────────────────────
 
 /// Persist a single trial's metadata + raw pupil/gaze series (JSON blobs)

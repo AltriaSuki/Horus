@@ -45,6 +45,8 @@ pub fn run() {
             commands::get_session,
             commands::get_report,
             commands::list_subject_sessions,
+            commands::delete_session,
+            commands::delete_sessions,
             commands::submit_calibration_sample,
             commands::finish_calibration,
             commands::submit_trial_result,
@@ -53,7 +55,19 @@ pub fn run() {
             commands::launch_game,
             commands::stop_game,
             commands::run_inference,
+            commands::start_eye_tracker,
+            commands::stop_eye_tracker,
+            commands::get_eye_tracker_status,
+            commands::eye_tracker_collect_point,
+            commands::eye_tracker_train,
+            commands::eye_tracker_start_server,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                log::info!("App exiting — cleaning up camera and subprocesses");
+                commands::cleanup_on_exit();
+            }
+        });
 }

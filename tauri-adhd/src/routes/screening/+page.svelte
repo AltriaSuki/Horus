@@ -8,6 +8,7 @@
     phase,
     PHASES,
     resetSession,
+    setTaskConfig,
   } from '$lib/stores/session.js';
 
   let subjects = $state([]);
@@ -18,6 +19,8 @@
   let loadingSubjects = $state(true);
   // 'idle' | 'permission' — show camera permission explanation modal
   let stage = $state('idle');
+  let testBlocks = $state(8);
+  let testTrialsPerBlock = $state(20);
 
   onMount(async () => {
     try {
@@ -62,6 +65,10 @@
       currentSubject.set(subject);
       phase.set(PHASES.CALIBRATING);
 
+        setTaskConfig({
+          totalBlocks: testBlocks,
+          trialsPerBlock: testTrialsPerBlock,
+        });
       goto('/screening/running');
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
@@ -151,6 +158,35 @@
   {#if error && stage === 'idle'}
     <div class="error-msg animate-fade-in">{error}</div>
   {/if}
+
+  <div class="test-config-section animate-fade-in stagger-4">
+    <h2 class="section-title">测试配置</h2>
+    <p class="config-hint">调小后可快速验证流程与报告保存（正式使用建议 8 x 20）</p>
+    <div class="config-grid">
+      <label class="config-item">
+        <span>Block 数</span>
+        <input
+          class="input-field"
+          type="number"
+          min="1"
+          max="20"
+          value={testBlocks}
+          oninput={(e) => { testBlocks = Math.max(1, Number(e.currentTarget.value) || 1); }}
+        />
+      </label>
+      <label class="config-item">
+        <span>每 Block 题数</span>
+        <input
+          class="input-field"
+          type="number"
+          min="1"
+          max="50"
+          value={testTrialsPerBlock}
+          oninput={(e) => { testTrialsPerBlock = Math.max(1, Number(e.currentTarget.value) || 1); }}
+        />
+      </label>
+    </div>
+  </div>
 
   <!-- Start button -->
   <div class="start-section">
@@ -303,6 +339,30 @@
     display: flex;
     justify-content: center;
     padding: var(--space-md) 0;
+  }
+  .test-config-section {
+    margin-bottom: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--surface-solid);
+    border-radius: var(--radius-lg);
+    border: 2px dashed rgba(255, 140, 66, 0.35);
+  }
+  .config-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-md);
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+  .config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 600;
   }
   .start-btn {
     font-size: var(--font-size-xl);

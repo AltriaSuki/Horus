@@ -159,8 +159,8 @@ impl FixationSmoother {
             x: None,
             y: None,
             fixation_vel_thresh: 25.0,  // px/frame
-            fixation_alpha: 0.05,
-            saccade_alpha: 0.35,
+            fixation_alpha: 0.4,        // match Python POS_SMOOTH_ALPHA
+            saccade_alpha: 0.7,         // fast reaction for saccades
         }
     }
 
@@ -320,6 +320,14 @@ impl RidgeRegressor {
         }
 
         self.fitted = true;
+
+        // Diagnostic: log scaler stats and weight magnitudes
+        log::info!("Ridge fit: n={} d={} alpha={}", n, d, alpha);
+        log::info!("  Scaler mean: {:?}", &self.mean);
+        log::info!("  Scaler std:  {:?}", &self.std);
+        for j in 0..d1 {
+            log::info!("  W[{}] = [{:.4}, {:.4}]", j, self.weights[j][0], self.weights[j][1]);
+        }
     }
 
     /// Predict screen coordinates from an 8D feature vector.
@@ -373,7 +381,7 @@ impl FeatureBuffer {
     /// Exponentially weighted mean: newer frames get higher weight.
     pub fn weighted_mean(&self) -> Option<[f64; 8]> {
         let n = self.buf.len();
-        if n < 3 {
+        if n < 1 {
             return None;
         }
 

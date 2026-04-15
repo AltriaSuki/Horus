@@ -18,7 +18,7 @@ use crate::gaze_math::{
 const BLINK_EAR_THRESHOLD: f32 = 0.12;
 
 /// Minimum number of buffered features before ridge prediction kicks in.
-const MIN_FEATURES_FOR_PREDICTION: usize = 3;
+const MIN_FEATURES_FOR_PREDICTION: usize = 1;
 
 // ═══════════════════════════════════════════════════════════════════
 // Type alias for the AFFNet model plan
@@ -39,6 +39,8 @@ const RIGHT_EYE_INDICES: &[usize] = &[
 ];
 
 /// Compute the bounding box of a set of landmark indices in pixel coordinates.
+/// Skips landmarks at (0,0) which are unset when face_landmark falls back to
+/// synthesize_landmarks_from_bbox.
 fn landmark_rect(
     landmarks: &[Landmark],
     indices: &[usize],
@@ -50,10 +52,15 @@ fn landmark_rect(
     let mut min_y = f32::MAX;
     let mut max_x = f32::MIN;
     let mut max_y = f32::MIN;
+    let mut count = 0;
 
     for &i in indices {
         if i >= landmarks.len() {
-            return None;
+            continue; // skip missing indices instead of failing
+        }
+        // Skip unset landmarks (synthesize_landmarks_from_bbox leaves them at (0,0))
+        if landmarks[i].x.abs() < 1e-6 && landmarks[i].y.abs() < 1e-6 {
+            continue;
         }
         let px = landmarks[i].x * img_w;
         let py = landmarks[i].y * img_h;
@@ -61,6 +68,11 @@ fn landmark_rect(
         min_y = min_y.min(py);
         max_x = max_x.max(px);
         max_y = max_y.max(py);
+        count += 1;
+    }
+
+    if count < 2 {
+        return None; // need at least 2 valid points for a bounding box
     }
 
     let w = max_x - min_x;
@@ -80,14 +92,20 @@ fn landmark_rect(
     Some((x0, y0, x1, y1))
 }
 
-/// Compute the face bounding box from all 468 face landmarks.
+/// Compute the face bounding box from non-zero face landmarks.
 fn face_rect_from_landmarks(
     landmarks: &[Landmark],
     img_w: f32,
     img_h: f32,
 ) -> Option<(u32, u32, u32, u32)> {
-    let indices: Vec<usize> = (0..468.min(landmarks.len())).collect();
-    landmark_rect(landmarks, &indices, img_w, img_h, 0.1)
+    // Only use landmarks that are actually set (non-zero)
+    let valid_indices: Vec<usize> = (0..468.min(landmarks.len()))
+        .filter(|&i| landmarks[i].x.abs() > 1e-6 || landmarks[i].y.abs() > 1e-6)
+        .collect();
+    if valid_indices.len() < 2 {
+        return None;
+    }
+    landmark_rect(landmarks, &valid_indices, img_w, img_h, 0.1)
 }
 
 /// Build the 12D rect feature for AFFNet:
@@ -143,13 +161,13 @@ fn crop_and_preprocess(
     for y in 0..out_h {
         for x in 0..out_w {
             let px = resized.get_pixel(x as u32, y as u32);
-            // Normalise to [0, 1]
-            tensor[[0, 0, y, x]] = px[0] as f32 / 255.0;
+            // Normalise to [-1, 1] using mean=0.5, std=0.5 (matching Python AFFNet transforms)
+            tensor[[0, 0, y, x]] = px[0] as f32 / 255.0 * 2.0 - 1.0;
             if out_c >= 2 {
-                tensor[[0, 1, y, x]] = px[1] as f32 / 255.0;
+                tensor[[0, 1, y, x]] = px[1] as f32 / 255.0 * 2.0 - 1.0;
             }
             if out_c >= 3 {
-                tensor[[0, 2, y, x]] = px[2] as f32 / 255.0;
+                tensor[[0, 2, y, x]] = px[2] as f32 / 255.0 * 2.0 - 1.0;
             }
         }
     }
@@ -324,6 +342,15 @@ impl GazePipeline {
         let (screen_x, screen_y) = if self.feat_buf.len() >= MIN_FEATURES_FOR_PREDICTION {
             if let Some(mean_feat) = self.feat_buf.weighted_mean() {
                 let (raw_x, raw_y) = self.ridge.predict(&mean_feat);
+                // Log every 10th frame to avoid spam
+                if self.frame_count % 10 == 0 {
+                    log::info!(
+                        "Gaze predict: feat=[{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3},{:.3}] -> raw=({:.1},{:.1})",
+                        mean_feat[0], mean_feat[1], mean_feat[2], mean_feat[3],
+                        mean_feat[4], mean_feat[5], mean_feat[6], mean_feat[7],
+                        raw_x, raw_y
+                    );
+                }
                 // Clamp to screen bounds
                 let clamped_x = raw_x.clamp(0.0, self.screen_w as f64);
                 let clamped_y = raw_y.clamp(0.0, self.screen_h as f64);
@@ -449,6 +476,11 @@ impl GazePipeline {
     /// 最近一帧的 8D 特征；无人脸/眨眼/虹膜缺失时为 None。
     pub fn latest_feature(&self) -> Option<[f64; 8]> {
         self.last_feature
+    }
+
+    /// Direct Ridge prediction without smoothing (for training error evaluation).
+    pub fn predict_raw(&self, feat: &[f64; 8]) -> (f64, f64) {
+        self.ridge.predict(feat)
     }
 }
 

@@ -5,6 +5,7 @@
  * Pages subscribe via $sessionStore, etc.
  */
 import { writable, derived } from 'svelte/store';
+import { get } from 'svelte/store';
 
 /** Phase of the current screening workflow */
 export const PHASES = {
@@ -37,6 +38,12 @@ export const calibration = writable({
 /** Trial results collected during the Sternberg task */
 export const trialResults = writable([]);
 
+/** Runtime-configurable screening task parameters */
+export const taskConfig = writable({
+  totalBlocks: 8,
+  trialsPerBlock: 20,
+});
+
 /** Current block number (1-8) */
 export const currentBlock = writable(1);
 
@@ -59,8 +66,14 @@ export const TOTAL_TRIALS = 160;
 export const TRIALS_PER_BLOCK = 20;
 export const TOTAL_BLOCKS = 8;
 
+/** Configured task totals (can be reduced for test runs) */
+export const totalTrialsTarget = derived(taskConfig, ($cfg) => $cfg.totalBlocks * $cfg.trialsPerBlock);
+
 /** Overall progress as a fraction 0..1 */
-export const progress = derived(totalTrialsCompleted, ($total) => $total / TOTAL_TRIALS);
+export const progress = derived([totalTrialsCompleted, totalTrialsTarget], ([$total, $target]) => {
+  if (!$target || $target <= 0) return 0;
+  return Math.min(1, $total / $target);
+});
 
 /** Accuracy so far */
 export const accuracy = derived(trialResults, ($trials) => {
@@ -83,11 +96,22 @@ export function resetSession() {
     validationDone: false,
   });
   trialResults.set([]);
+  taskConfig.set({
+    totalBlocks: TOTAL_BLOCKS,
+    trialsPerBlock: TRIALS_PER_BLOCK,
+  });
   currentBlock.set(1);
   currentTrialInBlock.set(1);
   totalTrialsCompleted.set(0);
   currentReport.set(null);
   sessionError.set(null);
+}
+
+/** Configure screening task size (used mainly for fast testing). */
+export function setTaskConfig(config) {
+  const totalBlocks = Math.max(1, Number(config?.totalBlocks ?? TOTAL_BLOCKS) || TOTAL_BLOCKS);
+  const trialsPerBlock = Math.max(1, Number(config?.trialsPerBlock ?? TRIALS_PER_BLOCK) || TRIALS_PER_BLOCK);
+  taskConfig.set({ totalBlocks, trialsPerBlock });
 }
 
 /** Record a completed trial */
@@ -96,9 +120,11 @@ export function recordTrial(trialResult) {
   totalTrialsCompleted.update((n) => n + 1);
 
   // Advance block/trial counters
+  const cfg = get(taskConfig);
+  const perBlock = Math.max(1, cfg.trialsPerBlock || TRIALS_PER_BLOCK);
   const newTotal = trialResult.trial_num;
-  const block = Math.floor((newTotal - 1) / TRIALS_PER_BLOCK) + 1;
-  const trialInBlock = ((newTotal - 1) % TRIALS_PER_BLOCK) + 1;
+  const block = Math.floor((newTotal - 1) / perBlock) + 1;
+  const trialInBlock = ((newTotal - 1) % perBlock) + 1;
   currentBlock.set(block);
   currentTrialInBlock.set(trialInBlock);
 }

@@ -33,7 +33,15 @@ type OnnxPlan = TypedRunnableModel<TypedModel>;
 /// - 2 anchors per cell
 /// - Anchor format: (cx, cy) normalised to [0, 1]
 fn generate_blazeface_anchors() -> Vec<[f32; 2]> {
-    let strides = [8u32, 16];
+    // MediaPipe BlazeFace short-range anchor spec:
+    // 4 feature map layers with strides [8, 16, 16, 16]
+    // 2 anchors per cell at each layer
+    // Input size: 128x128
+    // This produces 896 anchors total:
+    //   stride 8:  16×16×2 = 512
+    //   stride 16:  8× 8×2 = 128  (×3 layers = 384)
+    //   Total: 512 + 384 = 896
+    let strides = [8u32, 16, 16, 16];
     let anchors_per_stride = 2;
     let input_size = 128u32;
     let mut anchors = Vec::new();
@@ -278,6 +286,12 @@ impl FaceMeshDetector {
         let scores_tensor = outputs[0].to_array_view::<f32>().ok()?;
         let boxes_tensor = outputs[1].to_array_view::<f32>().ok()?;
 
+        log::info!(
+            "BlazeFace output shapes: [0]={:?}, [1]={:?}",
+            scores_tensor.shape(),
+            boxes_tensor.shape()
+        );
+
         // Determine which output is scores vs regressors by shape
         let (scores_view, boxes_view) = if scores_tensor.shape().last() == Some(&1)
             || (scores_tensor.ndim() >= 2
@@ -305,11 +319,18 @@ impl FaceMeshDetector {
         for i in 0..num_anchors.min(scores_flat.len()) {
             let raw = scores_flat[i];
             let score = 1.0 / (1.0 + (-raw).exp()); // sigmoid
-            if score > best_score && score > 0.5 {
+            if score > best_score {
                 best_score = score;
-                best_idx = Some(i);
+                if score > 0.5 {
+                    best_idx = Some(i);
+                }
             }
         }
+
+        log::info!(
+            "BlazeFace best score: {:.4} (raw logit), anchors={}, scores_len={}, boxes_len={}, box_stride={}",
+            best_score, num_anchors, scores_flat.len(), boxes_flat.len(), box_stride
+        );
 
         let idx = best_idx?;
         let anchor = self.anchors[idx];
@@ -542,6 +563,7 @@ fn synthesize_landmarks_from_bbox(bbox: &Rect, img_w: f32, img_h: f32) -> Vec<La
     let eye_y = cy - 0.10 * fh;            // eyes sit ~10% above bbox center
     let eye_half_span = 0.20 * fw;         // each eye ~20% of face width from center
     let eye_radius = 0.08 * fw;            // inner→outer corner half-width
+    let eye_lid_offset = 0.03 * fh;        // upper/lower eyelid vertical offset
 
     let right_eye_cx = cx - eye_half_span; // anatomical right = image left
     let left_eye_cx  = cx + eye_half_span;
@@ -551,6 +573,22 @@ fn synthesize_landmarks_from_bbox(bbox: &Rect, img_w: f32, img_h: f32) -> Vec<La
     lm[133] = Landmark { x: right_eye_cx + eye_radius, y: eye_y }; // right inner
     lm[362] = Landmark { x: left_eye_cx  - eye_radius, y: eye_y }; // left inner
     lm[263] = Landmark { x: left_eye_cx  + eye_radius, y: eye_y }; // left outer
+
+    // EAR landmarks for right eye: [33, 160, 158, 133, 153, 144]
+    // p2=160 (upper-inner), p3=158 (upper-outer) — above eye line
+    // p5=153 (lower-outer), p6=144 (lower-inner) — below eye line
+    lm[160] = Landmark { x: right_eye_cx - eye_radius * 0.3, y: eye_y - eye_lid_offset };
+    lm[158] = Landmark { x: right_eye_cx + eye_radius * 0.3, y: eye_y - eye_lid_offset };
+    lm[153] = Landmark { x: right_eye_cx + eye_radius * 0.3, y: eye_y + eye_lid_offset };
+    lm[144] = Landmark { x: right_eye_cx - eye_radius * 0.3, y: eye_y + eye_lid_offset };
+
+    // EAR landmarks for left eye: [362, 385, 387, 263, 373, 380]
+    // p2=385 (upper), p3=387 (upper) — above eye line
+    // p5=373 (lower), p6=380 (lower) — below eye line
+    lm[385] = Landmark { x: left_eye_cx - eye_radius * 0.3, y: eye_y - eye_lid_offset };
+    lm[387] = Landmark { x: left_eye_cx + eye_radius * 0.3, y: eye_y - eye_lid_offset };
+    lm[373] = Landmark { x: left_eye_cx + eye_radius * 0.3, y: eye_y + eye_lid_offset };
+    lm[380] = Landmark { x: left_eye_cx - eye_radius * 0.3, y: eye_y + eye_lid_offset };
 
     // Face structural points used for head pose estimation
     lm[1]   = Landmark { x: cx,                          y: cy + 0.05 * fh }; // nose tip
@@ -587,10 +625,10 @@ mod tests {
     #[test]
     fn test_anchor_generation() {
         let anchors = generate_blazeface_anchors();
-        // stride=8: (128/8)^2 * 2 = 16*16*2 = 512
-        // stride=16: (128/16)^2 * 2 = 8*8*2 = 128
-        // Total: 640
-        assert_eq!(anchors.len(), 640);
+        // stride=8:  16×16×2 = 512
+        // stride=16:  8× 8×2 = 128, ×3 layers = 384
+        // Total: 896
+        assert_eq!(anchors.len(), 896);
 
         // All anchors should be in [0, 1]
         for a in &anchors {

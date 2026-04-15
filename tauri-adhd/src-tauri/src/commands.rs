@@ -2,7 +2,7 @@
 //!
 //! Each `#[tauri::command]` function is callable from JS via `invoke('name', {...})`.
 
-use crate::{camera, game, inference, pipeline, storage};
+use crate::{camera, eye_tracker_server, game, inference, pipeline, storage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -282,6 +282,10 @@ fn stream_gaze_loop(app: AppHandle) {
         if let Some(gf) = gaze_frame {
             // Emit gaze_frame event to frontend
             let _ = app.emit("gaze_frame", &gf);
+            // Also broadcast to any connected Unity game clients over TCP
+            if let Some(srv) = EYE_SERVER.lock().as_ref() {
+                srv.broadcast(&gf);
+            }
         }
 
         // ~30 fps pacing (don't spin faster than the camera)
@@ -454,16 +458,92 @@ pub fn cancel_screening(session_id: String) -> Result<(), String> {
 static GAME: once_cell::sync::Lazy<Mutex<Option<game::GameManager>>> =
     once_cell::sync::Lazy::new(|| Mutex::new(None));
 
+// Global TCP server that broadcasts gaze frames to the Unity game client.
+// Started when `launch_game` runs, stopped by `stop_game`.
+static EYE_SERVER: once_cell::sync::Lazy<Mutex<Option<eye_tracker_server::EyeTrackerServer>>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(None));
+
+/// True when the current gaze stream was started by `launch_game` rather
+/// than by `start_screening`. Lets `stop_game` know to tear down the camera
+/// too (screening keeps ownership when it started).
+static GAZE_OWNED_BY_GAME: once_cell::sync::Lazy<Mutex<bool>> =
+    once_cell::sync::Lazy::new(|| Mutex::new(false));
+
+/// Start camera + pipeline + gaze stream when we need live gaze without a
+/// full screening session (e.g. the training game). No-op if gaze is
+/// already streaming (screening already owns the pipeline).
+fn ensure_gaze_streaming_for_game(
+    screen_width: u32,
+    screen_height: u32,
+    app: &AppHandle,
+) -> Result<(), String> {
+    // If a screening is active, reuse its pipeline; just leave ownership flag off.
+    {
+        let state = SESSION.lock();
+        if state.streaming && state.pipeline.is_some() && state.camera.is_some() {
+            log::info!("Gaze already streaming (screening session); reusing");
+            return Ok(());
+        }
+    }
+
+    // Resolve models_dir the same way start_screening does.
+    let exe_dir = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| PathBuf::from("."));
+    let candidates = [
+        exe_dir.join("models"),
+        exe_dir.join("../models"),
+        exe_dir.join("../../models"),
+        exe_dir.join("../Resources/models"),
+        PathBuf::from("../models"),
+        PathBuf::from("models"),
+    ];
+
+    {
+        let mut state = SESSION.lock();
+        state.streaming = false;
+        for c in &candidates {
+            if c.join("rf_model.json").exists() {
+                state.models_dir = c.clone();
+                break;
+            }
+        }
+        let pipe = pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height)
+            .map_err(|e| format!("Gaze pipeline 初始化失败: {}", e))?;
+        state.pipeline = Some(pipe);
+
+        let cam = camera::CameraCapture::start_with(0, 640, 480, 30)
+            .map_err(|e| classify_camera_error(&e.to_string()))?;
+        state.camera = Some(cam);
+    }
+
+    let app_clone = app.clone();
+    let handle = std::thread::Builder::new()
+        .name("gaze-stream-game".into())
+        .spawn(move || stream_gaze_loop(app_clone))
+        .map_err(|e| format!("启动 gaze 流线程失败: {}", e))?;
+
+    SESSION.lock().gaze_thread = Some(handle);
+    *GAZE_OWNED_BY_GAME.lock() = true;
+    Ok(())
+}
+
 /// Launch the Unity game as a subprocess. game_path is optional — if empty,
 /// the backend resolves it via game::resolve_game_exe().
 #[tauri::command]
-pub fn launch_game(game_path: String) -> Result<u32, String> {
+pub fn launch_game(
+    game_path: String,
+    screen_width: Option<u32>,
+    screen_height: Option<u32>,
+    app: AppHandle,
+) -> Result<u32, String> {
     // 先停掉可能残留的旧进程
     if let Some(mut old) = GAME.lock().take() {
         let _ = old.stop();
     }
 
-    // 解析可执行文件：前端传空字符串或占位符 → 后端自动搜索
+    // 解析可执行文件
     let exe = if game_path.is_empty() || game_path == "training-game" {
         game::resolve_game_exe()
             .ok_or_else(|| "未找到游戏可执行文件。请确保 eye.exe 已打包到应用目录。".to_string())?
@@ -479,6 +559,30 @@ pub fn launch_game(game_path: String) -> Result<u32, String> {
         ));
     }
 
+    // 启动 TCP server（幂等）
+    {
+        let mut slot = EYE_SERVER.lock();
+        if slot.is_none() {
+            let srv = eye_tracker_server::EyeTrackerServer::start(
+                eye_tracker_server::DEFAULT_HOST,
+                eye_tracker_server::DEFAULT_PORT,
+            )
+            .map_err(|e| format!("启动眼动 TCP server 失败: {}", e))?;
+            *slot = Some(srv);
+        }
+    }
+
+    // 启动 camera/pipeline（如果还没跑）
+    let sw = screen_width.unwrap_or(1920);
+    let sh = screen_height.unwrap_or(1080);
+    if let Err(e) = ensure_gaze_streaming_for_game(sw, sh, &app) {
+        // 回滚 server
+        if let Some(mut srv) = EYE_SERVER.lock().take() {
+            srv.stop();
+        }
+        return Err(e);
+    }
+
     let exe_str = exe
         .to_str()
         .ok_or_else(|| "游戏路径包含非法字符".to_string())?;
@@ -486,7 +590,8 @@ pub fn launch_game(game_path: String) -> Result<u32, String> {
     match game::GameManager::launch(exe_str) {
         Ok(gm) => {
             let pid = gm.pid().unwrap_or(0);
-            log::info!("Game launched (pid={})", pid);
+            log::info!("Game launched (pid={}), gaze server on {}:{}", pid,
+                eye_tracker_server::DEFAULT_HOST, eye_tracker_server::DEFAULT_PORT);
             *GAME.lock() = Some(gm);
             Ok(pid)
         }
@@ -496,10 +601,29 @@ pub fn launch_game(game_path: String) -> Result<u32, String> {
 
 #[tauri::command]
 pub fn stop_game() -> Result<(), String> {
-    let mut slot = GAME.lock();
-    if let Some(mut gm) = slot.take() {
+    // 停游戏进程
+    if let Some(mut gm) = GAME.lock().take() {
         gm.stop().map_err(|e| format!("停止游戏失败: {}", e))?;
         log::info!("Game stopped");
+    }
+
+    // 停 TCP server
+    if let Some(mut srv) = EYE_SERVER.lock().take() {
+        srv.stop();
+    }
+
+    // 如果 gaze 是游戏启动时开的（而不是 screening），顺便关掉摄像头/pipeline
+    let owned_by_game = {
+        let mut f = GAZE_OWNED_BY_GAME.lock();
+        let v = *f;
+        *f = false;
+        v
+    };
+    if owned_by_game {
+        shutdown_gaze_thread();
+        let mut state = SESSION.lock();
+        state.camera = None;
+        state.pipeline = None;
     }
     Ok(())
 }

@@ -81,7 +81,11 @@
     error = null;
     try {
       // gamePath 留空 → 后端自动解析可执行文件位置
-      const pid = await invoke('launch_game', { gamePath: '' });
+      const pid = await invoke('launch_game', {
+        gamePath: '',
+        screenWidth: window.innerWidth,
+        screenHeight: window.innerHeight,
+      });
       gamePid = pid;
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));

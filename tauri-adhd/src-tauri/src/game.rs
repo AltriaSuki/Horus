@@ -3,13 +3,10 @@
 //! Launches the Unity game as a child process and streams gaze data
 //! to it via JSON lines written to stdin.
 
-use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 
 use anyhow::{Context, Result};
-
-use crate::gaze_math::GazeFrame;
 
 /// Locate the Unity game executable across dev and release environments.
 /// Returns the first path that exists, or None if the game is not bundled.
@@ -70,30 +67,6 @@ impl GameManager {
         Ok(Self {
             child: Some(child),
         })
-    }
-
-    /// Send a gaze frame to the running game as a JSON line on stdin.
-    ///
-    /// Each line is a complete JSON object followed by `\n`:
-    /// ```json
-    /// {"t":1.23,"x":960.0,"y":540.0,"pupil":0.35,"valid":true,"fps":30}
-    /// ```
-    pub fn send_gaze(&mut self, frame: &GazeFrame) -> Result<()> {
-        let child = self
-            .child
-            .as_mut()
-            .context("Game process is not running")?;
-
-        let stdin = child
-            .stdin
-            .as_mut()
-            .context("Game process stdin not available")?;
-
-        let json = serde_json::to_string(frame).context("Serializing GazeFrame")?;
-        writeln!(stdin, "{}", json).context("Writing to game stdin")?;
-        stdin.flush().context("Flushing game stdin")?;
-
-        Ok(())
     }
 
     /// Check if the game process is still running.
@@ -162,22 +135,4 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    #[cfg(unix)]
-    fn test_launch_and_send() {
-        // Use `cat` as a simple stdin-reading process on Unix
-        let mut gm = GameManager::launch("cat").unwrap();
-        assert!(gm.is_running());
-
-        let frame = GazeFrame {
-            t: 1.0,
-            x: 100.0,
-            y: 200.0,
-            pupil: 0.3,
-            valid: true,
-            fps: 30,
-        };
-        gm.send_gaze(&frame).unwrap();
-        gm.stop().unwrap();
-    }
 }

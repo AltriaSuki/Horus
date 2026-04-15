@@ -13,6 +13,7 @@ pub mod commands;
 pub mod face_mesh;
 pub mod pipeline;
 pub mod camera;
+pub mod eye_tracker_server;
 pub mod game;
 
 use tauri::Manager;

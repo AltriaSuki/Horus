@@ -80,17 +80,20 @@
     if (!level) return 'var(--secondary)';
     const l = level.toLowerCase();
     if (l === 'low' || l === '低风险') return 'var(--secondary)';
-    if (l === 'medium' || l === '中风险') return 'var(--tertiary-dark)';
+    if (l === 'medium' || l === 'moderate' || l === '中风险' || l === '中等关注') return 'var(--tertiary-dark)';
     if (l === 'high' || l === '高风险') return 'var(--error)';
+    if (l === 'minimal' || l === '极低关注' || l === '极低') return 'var(--secondary)';
     return 'var(--text-muted)';
   }
 
   function riskLabel(level) {
     if (!level) return '未知';
     const l = level.toLowerCase();
-    if (l === 'low') return '低风险';
-    if (l === 'medium') return '中风险';
-    if (l === 'high') return '高风险';
+    // Show Chinese label before the English level (as requested)
+    if (l === 'high' || l === '高风险' || l === '高关注') return '高关注 HIGH';
+    if (l === 'moderate' || l === 'medium' || l === '中风险' || l === '中等关注') return '中等关注 MODERATE';
+    if (l === 'low' || l === '低风险' || l === '较低关注') return '较低关注 LOW';
+    if (l === 'minimal' || l === 'min' || l === '极低关注' || l === '极低') return '极低关注 MINIMAL';
     return level;
   }
 

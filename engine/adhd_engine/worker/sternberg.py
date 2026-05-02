@@ -832,7 +832,7 @@ class SternbergTask:
         # AA yellow probe dot, slightly larger than the encoding dots so
         # the child knows "this is the one you answer about"
         self._draw_aa_circle((255, 220, 50), (px, py), self.dot_r + 3)
-        hint = self.font_sm.render("F = 出现过    J = 没出现过", True, (180, 180, 180))
+        hint = self.font_sm.render("1 = 出现过    2 = 没出现过（主键盘或小键盘）", True, (180, 180, 180))
         self.screen.blit(
             hint, (self.sw // 2 - hint.get_width() // 2, self.sh - 72))
 
@@ -1064,7 +1064,7 @@ class SternbergTask:
             ("2", (255, 140, 66),  "记住圆点在哪里出现过 (一共 3 屏)"),
             ("3", (255, 209, 102), "看一眼干扰画面，不要分心"),
             ("4", (231, 76, 60),
-             "看到圆点时：出现过按 F，没出现过按 J"),
+             "看到圆点时：出现过按 1，没出现过按 2（主键盘或小键盘）"),
         ]
         y0 = cy - 40
         for i, (num, color, text) in enumerate(steps):
@@ -1092,7 +1092,7 @@ class SternbergTask:
 
         # Big start button — no emoji, just Chinese text
         btn_text = self.font_big.render(
-            "按 空格键 开始闯关", True, (255, 255, 255))
+            "按任意键 开始闯关", True, (255, 255, 255))
         btn_w = btn_text.get_width() + 80
         btn_h = btn_text.get_height() + 36
         btn_rect = pygame.Rect(
@@ -1127,8 +1127,7 @@ class SternbergTask:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         raise KeyboardInterrupt
-                    if event.key == pygame.K_SPACE:
-                        return
+                    return
             self.clock.tick(10)
 
     def _show_break(self, block_done, total_blocks):
@@ -1183,7 +1182,7 @@ class SternbergTask:
 
         # Continue button — no emoji (▶ triangle often not in CJK fonts)
         btn_text = self.font_big.render(
-            "按 空格键 继续", True, (255, 255, 255))
+            "按任意键 继续", True, (255, 255, 255))
         btn_w = btn_text.get_width() + 80
         btn_h = btn_text.get_height() + 36
         btn_rect = pygame.Rect(
@@ -1215,8 +1214,7 @@ class SternbergTask:
                 if event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         raise KeyboardInterrupt
-                    if event.key == pygame.K_SPACE:
-                        return
+                    return
             self.clock.tick(10)
 
     # ──────────────────────────────────────

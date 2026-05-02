@@ -106,6 +106,20 @@
     <p class="hero-subtitle">Sternberg 工作记忆范式 -- 注意力早期筛查</p>
   </div>
 
+  <!-- Child-friendly guidance -->
+  <div class="guide-card animate-fade-in stagger-1">
+    <div class="guide-badge">指导语</div>
+    <div class="guide-content">
+      <h2 class="guide-title">小朋友先听我说</h2>
+      <p class="guide-text">
+        先跟着屏幕上的小提示做。<br />
+        你要记住圆点有没有出现过。<br />
+        见过的按 1，没见过的按 2。按主键盘或数字小键盘的 1/2 都可以。<br />
+        坐好一点，眼睛看着屏幕，慢慢来就行。
+      </p>
+    </div>
+  </div>
+
   <!-- Steps guide -->
   <div class="steps-section">
     <h2 class="section-title animate-fade-in">闯关流程</h2>
@@ -253,6 +267,46 @@
     box-shadow: var(--shadow-lg);
     border: 4px solid rgba(255, 255, 255, 0.4);
   }
+
+  .guide-card {
+    display: flex;
+    gap: var(--space-md);
+    align-items: flex-start;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 24px;
+    padding: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .guide-badge {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+  .guide-content {
+    min-width: 0;
+  }
+  .guide-title {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .guide-text {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text-muted);
+  }
+
   .hero-bg {
     display: flex;
     justify-content: center;

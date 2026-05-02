@@ -75,6 +75,9 @@ class _ScreeningStartPageState extends State<ScreeningStartPage> {
           const _HeroCard(),
           const SizedBox(height: 24),
 
+          const _TaskGuideCard(),
+          const SizedBox(height: 24),
+
           // ===== Three-step explainer ==========================================
           Text('闯关 3 步走', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 12),
@@ -99,7 +102,7 @@ class _ScreeningStartPageState extends State<ScreeningStartPage> {
             color: AppColors.tertiary,
             icon: Icons.videogame_asset_outlined,
             title: '记圆点、按按键',
-            subtitle: '记住屏幕上出现过的圆点位置，看到熟悉的按 F，新的按 J',
+            subtitle: '记住屏幕上出现过的圆点位置，看到熟悉的按 1，新的按 2（主键盘或小键盘）',
           ),
           const SizedBox(height: 28),
 
@@ -320,6 +323,67 @@ class _StepCard extends StatelessWidget {
                 const SizedBox(height: 2),
                 Text(subtitle,
                     style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+
+// ───────────────────────────────────────────────────────────────────────────
+// Task guide card
+// ───────────────────────────────────────────────────────────────────────────
+
+
+class _TaskGuideCard extends StatelessWidget {
+  const _TaskGuideCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: AppColors.primaryContainer,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.primary.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: const Icon(Icons.menu_book_rounded,
+                color: Colors.white, size: 26),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '小朋友先听我说',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.onPrimaryContainer,
+                      ),
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  '先跟着屏幕上的小提示做。\n一会儿你要记住圆点有没有出现过。\n见过的按 1，没见过的按 2（主键盘或小键盘）。\n坐好一点，眼睛看着屏幕，慢慢来就行。',
+                  style: TextStyle(
+                    fontSize: 14,
+                    height: 1.6,
+                    color: AppColors.onPrimaryContainer,
+                  ),
+                ),
               ],
             ),
           ),

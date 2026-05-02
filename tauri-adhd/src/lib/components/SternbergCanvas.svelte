@@ -294,10 +294,8 @@
 
     switch (taskPhase) {
       case 'intro':
-        // Show intro for 3 seconds, then start first trial
-        if (elapsed >= 3000) {
-          startNextTrial();
-        }
+        // Wait for user to press any key to start (changed from timed start)
+        // Intro will start when handleKeyDown detects a non-Escape key.
         break;
 
       case 'fixation':
@@ -408,9 +406,9 @@
 
   function determineCorrect() {
     if (!responseKey) return false;
-    // 'f' = target was present, 'j' = target was not present
-    if (probeIsTarget && responseKey === 'f') return true;
-    if (!probeIsTarget && responseKey === 'j') return true;
+    // '1' = target was present, '2' = target was not present
+    if (probeIsTarget && responseKey === '1') return true;
+    if (!probeIsTarget && responseKey === '2') return true;
     return false;
   }
 
@@ -447,13 +445,20 @@
     // accidentally answer the probe underneath.
     if (showExitConfirm) return;
 
+    // Start trial from intro on any non-escape key
+    if (taskPhase === 'intro') {
+      startNextTrial();
+      return;
+    }
+
     if (taskPhase === 'probe' && !responseKey) {
-      if (e.key === 'f' || e.key === 'F') {
-        responseKey = 'f';
+      // Accept main-row '1' or '2' and numpad 'Numpad1'/'Numpad2'
+      if (e.key === '1' || e.code === 'Numpad1') {
+        responseKey = '1';
         responseTime = performance.now() - probeOnsetTime;
         finishTrial();
-      } else if (e.key === 'j' || e.key === 'J') {
-        responseKey = 'j';
+      } else if (e.key === '2' || e.code === 'Numpad2') {
+        responseKey = '2';
         responseTime = performance.now() - probeOnsetTime;
         finishTrial();
       }
@@ -708,11 +713,11 @@
 
     ctx.fillStyle = '#4ECDC4';
     ctx.font = '700 18px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('F = 出现过      J = 没出现过', screenW / 2, screenH / 2 + 40);
+    ctx.fillText('1 = 出现过      2 = 没出现过（主键盘或小键盘）', screenW / 2, screenH / 2 + 40);
 
     ctx.fillStyle = '#8B6F5C';
     ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('即将开始...', screenW / 2, screenH / 2 + 90);
+    ctx.fillText('按任意键开始', screenW / 2, screenH / 2 + 90);
 
     // Trial info
     ctx.fillStyle = '#FF8C42';
@@ -830,7 +835,7 @@
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255, 248, 240, 0.5)';
     ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('F = 出现过      J = 没出现过', screenW / 2, screenH - 40);
+    ctx.fillText('1 = 出现过      2 = 没出现过（主键盘或小键盘）', screenW / 2, screenH - 40);
   }
 
   function drawFeedback(_now) {
@@ -919,6 +924,10 @@
     ctx.fillStyle = '#2B1810';
     ctx.font = '600 22px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(breakMessages[msgIndex], cx, cy);
+
+    ctx.fillStyle = '#8B6F5C';
+    ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText('建议休息 1 分钟', cx, cy + 34);
 
     // Progress bar
     const barW = screenW * 0.5;

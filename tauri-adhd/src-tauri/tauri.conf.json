@@ -23,7 +23,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["msi"],
+    "targets": ["nsis"],
     "resources": {
       "../models": "models",
       "../scripts/eye_tracker_server.py": "scripts/eye_tracker_server.py",

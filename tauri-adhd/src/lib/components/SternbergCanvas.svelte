@@ -379,6 +379,8 @@
     // Determine correctness
     const correct = determineCorrect();
 
+    const sanitizeSeries = (series) => series.map((v) => (Number.isFinite(v) ? v : null));
+
     const trialResult = {
       trial_num: trialNum,
       block_num: blockNum,
@@ -387,10 +389,10 @@
       response: responseKey,
       reaction_time: isNaN(responseTime) ? 0.0 : responseTime / 1000, // to seconds (0 if no response)
       correct: correct,
-      // Preserve NaN placeholders (invalid frames) — backend skips them via .is_nan()
-      pupil_series: pupilSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
-      gaze_x_series: gazeXSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
-      gaze_y_series: gazeYSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
+      // Keep placeholders as null so Rust can treat them as invalid samples.
+      pupil_series: sanitizeSeries(pupilSeries),
+      gaze_x_series: sanitizeSeries(gazeXSeries),
+      gaze_y_series: sanitizeSeries(gazeYSeries),
     };
 
     // Send to Rust
@@ -1020,16 +1022,15 @@
       // Only sample while a trial is active and in a sampling-whitelisted phase.
       if (trialNum === 0 || !GAZE_SAMPLING_PHASES.has(taskPhase)) return;
 
-      // Invalid frames (or NaN coords) still push NaN placeholders so the
-      // time axis stays aligned; downstream feature extraction skips NaN.
+      // Invalid frames push null placeholders to keep alignment without NaN in IPC payloads.
       if (valid && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(pupil)) {
         pupilSeries.push(pupil);
         gazeXSeries.push(x);
         gazeYSeries.push(y);
       } else {
-        pupilSeries.push(NaN);
-        gazeXSeries.push(NaN);
-        gazeYSeries.push(NaN);
+        pupilSeries.push(null);
+        gazeXSeries.push(null);
+        gazeYSeries.push(null);
       }
     });
 

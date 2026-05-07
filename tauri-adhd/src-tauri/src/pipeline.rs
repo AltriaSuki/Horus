@@ -464,7 +464,17 @@ impl GazePipeline {
     pub fn reset(&mut self) {
         self.feat_buf.clear();
         self.smoother.reset();
+        self.pupil_smoother.reset();
+        self.ridge = RidgeRegressor::new();
         self.frame_count = 0;
+        self.last_feature = None;
+    }
+
+    /// Reset the pipeline for a new session and update screen size.
+    pub fn reset_for_new_session(&mut self, screen_w: u32, screen_h: u32) {
+        self.reset();
+        self.screen_w = screen_w;
+        self.screen_h = screen_h;
     }
 
     /// Return current raw 8D feature (for calibration data collection).

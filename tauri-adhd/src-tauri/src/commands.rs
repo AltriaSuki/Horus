@@ -6,7 +6,14 @@ use crate::{camera, eye_tracker_server, game, inference, pipeline, storage};
 use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
+
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 // ═══════════════════════════════════════════════════════════════════
 // Global session state — shared between commands
@@ -56,6 +63,54 @@ fn shutdown_gaze_thread() {
     }
 }
 
+/// Stop and drop the camera capture thread, if any.
+fn stop_camera_capture() {
+    let cam = {
+        let mut state = SESSION.lock();
+        state.camera.take()
+    };
+    if let Some(mut cam) = cam {
+        cam.stop();
+        if cam.is_running() {
+            log::warn!("Camera thread still running after stop()");
+        }
+    }
+}
+
+/// Attempt to open the camera with a small retry window for busy devices.
+fn open_camera_with_retry(
+    camera_index: u32,
+    width: u32,
+    height: u32,
+    fps: u32,
+) -> Result<camera::CameraCapture, String> {
+    let max_attempts = 3;
+    let delay_ms = 400;
+    let mut last_err: Option<String> = None;
+    for attempt in 1..=max_attempts {
+        match camera::CameraCapture::start_with(camera_index, width, height, fps) {
+            Ok(cam) => return Ok(cam),
+            Err(e) => {
+                let msg = e.to_string();
+                last_err = Some(msg.clone());
+                log::warn!(
+                    "Camera open attempt {}/{} failed: {}",
+                    attempt,
+                    max_attempts,
+                    msg
+                );
+                if attempt < max_attempts {
+                    std::thread::sleep(Duration::from_millis(delay_ms));
+                }
+            }
+        }
+    }
+
+    Err(classify_camera_error(
+        last_err.as_deref().unwrap_or("unknown camera error"),
+    ))
+}
+
 /// Called from lib.rs on RunEvent::Exit to release all hardware resources.
 pub fn cleanup_on_exit() {
     // 1. Stop Python eye tracker subprocess (releases its camera)
@@ -64,14 +119,16 @@ pub fn cleanup_on_exit() {
     // 2. Stop gaze streaming thread
     shutdown_gaze_thread();
 
-    // 3. Release Rust camera and pipeline
+    // 3. Stop camera capture thread
+    stop_camera_capture();
+
+    // 4. Release Rust pipeline
     {
         let mut state = SESSION.lock();
-        state.camera = None;
         state.pipeline = None;
     }
 
-    // 4. Stop TCP eye server if running
+    // 5. Stop TCP eye server if running
     if let Some(mut srv) = EYE_SERVER.lock().take() {
         srv.stop();
     }
@@ -162,6 +219,9 @@ pub fn start_screening(
     // 停止 Python 眼动追踪进程（如果之前训练时启动过），释放摄像头
     stop_eye_tracker_inner();
 
+    // 停止旧的相机采集线程，避免设备占用影响二次启动
+    stop_camera_capture();
+
     let session_id = uuid::Uuid::new_v4().to_string();
     let session = storage::create_session(&session_id, &subject_id, "screening", "sternberg")
         .map_err(|e| e.to_string())?;
@@ -182,44 +242,57 @@ pub fn start_screening(
     };
 
     // Reset session state + 分配资源
+    let models_dir = resolve_models_dir(Some(&app)).ok_or_else(|| {
+        "未找到 models 资源目录，请确认安装包包含模型文件。".to_string()
+    })?;
+    let pipeline_start = Instant::now();
+
     {
         let mut state = SESSION.lock();
         state.calibration_samples.clear();
         state.streaming = false;
         state.current_session_id = Some(session_id.clone());
 
-        state.models_dir = resolve_models_dir(Some(&app)).ok_or_else(|| {
-            "未找到 models 资源目录，请确认安装包包含模型文件。".to_string()
-        })?;
+        state.models_dir = models_dir;
         log::info!("Models dir: {:?}", state.models_dir);
 
         // Pipeline 初始化失败直接中止：没有 pipeline 则 gaze_frame 永远出不来
-        match pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height) {
-            Ok(p) => {
-                state.pipeline = Some(p);
-                log::info!("Gaze pipeline initialized ({}x{})", screen_width, screen_height);
-            }
-            Err(e) => {
-                drop(state);
-                return fail(format!(
-                    "Gaze pipeline 初始化失败: {}. 请确认模型文件和摄像头可用",
-                    e
-                ));
-            }
-        }
-
-        // 摄像头同样不可缺少
-        match camera::CameraCapture::start_with(0, 640, 480, 40) {
-            Ok(cam) => {
-                state.camera = Some(cam);
-                log::info!("Camera started");
-            }
-            Err(e) => {
-                drop(state);
-                return fail(classify_camera_error(&e.to_string()));
+        if let Some(pipe) = state.pipeline.as_mut() {
+            pipe.reset_for_new_session(screen_width, screen_height);
+            log::info!("Gaze pipeline reused ({}x{})", screen_width, screen_height);
+        } else {
+            match pipeline::GazePipeline::new(&state.models_dir, screen_width, screen_height) {
+                Ok(p) => {
+                    state.pipeline = Some(p);
+                    log::info!("Gaze pipeline initialized ({}x{})", screen_width, screen_height);
+                }
+                Err(e) => {
+                    drop(state);
+                    return fail(format!(
+                        "Gaze pipeline 初始化失败: {}. 请确认模型文件和摄像头可用",
+                        e
+                    ));
+                }
             }
         }
     }
+
+    log::info!(
+        "Gaze pipeline ready in {} ms",
+        pipeline_start.elapsed().as_millis()
+    );
+
+    // 摄像头同样不可缺少
+    let camera_start = Instant::now();
+    let cam = match open_camera_with_retry(0, 640, 480, 40) {
+        Ok(cam) => cam,
+        Err(e) => return fail(e),
+    };
+    {
+        let mut state = SESSION.lock();
+        state.camera = Some(cam);
+    }
+    log::info!("Camera started in {} ms", camera_start.elapsed().as_millis());
 
     // Start gaze streaming in a background thread
     let app_clone = app.clone();
@@ -249,8 +322,8 @@ pub fn start_screening(
 
 /// Background thread: reads camera frames, runs pipeline, emits gaze events.
 ///
-/// Precondition: 调用者已保证 `state.pipeline` 初始化成功；只有在 finish/cancel
-/// 主动清空 pipeline 时才会观察到 None，此时直接退出循环。
+/// Precondition: 调用者已保证 `state.pipeline` 初始化成功；如果在清理流程中
+/// pipeline 被释放为 None，则直接退出循环。
 fn stream_gaze_loop(app: AppHandle) {
     {
         let mut state = SESSION.lock();
@@ -447,10 +520,13 @@ pub fn finish_screening(
 ) -> Result<inference::AdhdReport, String> {
     // 先停 gaze 线程，再释放 camera / pipeline
     shutdown_gaze_thread();
+    stop_camera_capture();
     {
         let mut state = SESSION.lock();
-        state.camera = None;
-        state.pipeline = None;
+        if let Some(pipe) = state.pipeline.as_mut() {
+            pipe.reset();
+        }
+        state.calibration_samples.clear();
         state.current_session_id = None;
     }
 
@@ -499,10 +575,12 @@ pub fn finish_screening(
 #[tauri::command]
 pub fn cancel_screening(session_id: String) -> Result<(), String> {
     shutdown_gaze_thread();
+    stop_camera_capture();
     {
         let mut state = SESSION.lock();
-        state.camera = None;
-        state.pipeline = None;
+        if let Some(pipe) = state.pipeline.as_mut() {
+            pipe.reset();
+        }
         state.calibration_samples.clear();
         state.current_session_id = None;
     }
@@ -683,6 +761,37 @@ fn resolve_python() -> Option<PathBuf> {
 
     log::warn!("No working Python 3 found");
     None
+}
+
+fn check_eye_tracker_python_deps(python: &PathBuf) -> Result<(), String> {
+    let mut cmd = std::process::Command::new(python);
+    cmd.arg("-c")
+        .arg("import cv2, mediapipe, pygame, sklearn, numpy");
+
+    #[cfg(target_os = "windows")]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd.output().map_err(|e| format!(
+        "检查 Python 依赖失败: {} (python: {:?})",
+        e,
+        python
+    ))?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let detail = if !stderr.is_empty() { stderr } else { stdout };
+
+    Err(format!(
+        "眼动追踪依赖缺失或环境不可用。\nPython: {:?}\n请安装依赖: pip install opencv-python mediapipe pygame scikit-learn numpy\n详情: {}",
+        python,
+        detail
+    ))
 }
 
 /// Internal: kill the Python eye tracker process and reset state.
@@ -900,15 +1009,23 @@ pub fn start_eye_tracker(app: AppHandle, headless: Option<bool>) -> Result<(), S
     let script = resolve_eye_tracker_script(Some(&app))
         .ok_or("未找到 eye_tracker_server.py 脚本。请确保 scripts/ 目录存在。")?;
 
-    let script_str = script
+    let script_path = script
         .canonicalize()
-        .unwrap_or(script)
+        .unwrap_or(script);
+    let script_dir = script_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let script_str = script_path
         .to_str()
         .ok_or("脚本路径包含非法字符")?
         .to_string();
 
     let python = resolve_python()
         .ok_or("未找到 Python。请安装 Python 3 并确保其路径可被系统找到。")?;
+
+    check_eye_tracker_python_deps(&python)?;
 
     log::info!("Using Python: {:?}, script: {}, headless: {}", python, script_str, headless);
 
@@ -917,9 +1034,16 @@ pub fn start_eye_tracker(app: AppHandle, headless: Option<bool>) -> Result<(), S
         .arg(&script_str)
         .arg("--port")
         .arg("5678")
+        .current_dir(&script_dir)
         .env("PYTHONUNBUFFERED", "1")
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
+
+    #[cfg(target_os = "windows")]
+    {
+        // Prevent a blank console window from flashing when GUI app spawns python.exe.
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
 
     if headless {
         cmd.arg("--headless")

@@ -222,6 +222,10 @@ impl PupilSmoother {
         let sum: f32 = self.buf.iter().copied().sum();
         sum / self.buf.len() as f32
     }
+
+    pub fn reset(&mut self) {
+        self.buf.clear();
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════

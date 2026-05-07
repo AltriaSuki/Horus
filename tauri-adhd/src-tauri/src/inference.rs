@@ -21,9 +21,9 @@ pub struct TrialResult {
     pub response: Option<String>,    // "f" or "j" or null
     pub reaction_time: f64,          // seconds (NaN if no response)
     pub correct: bool,
-    pub pupil_series: Vec<f32>,
-    pub gaze_x_series: Vec<f64>,
-    pub gaze_y_series: Vec<f64>,
+    pub pupil_series: Vec<Option<f32>>,
+    pub gaze_x_series: Vec<Option<f64>>,
+    pub gaze_y_series: Vec<Option<f64>>,
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -120,7 +120,10 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     pupil_by_load.insert(2, Vec::new());
 
     for t in trials {
-        let pupil: Vec<f64> = t.pupil_series.iter().map(|&v| v as f64).collect();
+        let pupil: Vec<f64> = t.pupil_series
+            .iter()
+            .map(|v| v.unwrap_or(f32::NAN) as f64)
+            .collect();
         if pupil.len() < baseline_frames * 3 { continue; }
 
         let valid_idx: Vec<usize> = (0..pupil.len())
@@ -243,8 +246,8 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     for t in trials {
         let n = t.gaze_x_series.len().min(t.gaze_y_series.len());
         for i in 0..n {
-            let gx = t.gaze_x_series[i];
-            let gy = t.gaze_y_series[i];
+            let gx = t.gaze_x_series[i].unwrap_or(f64::NAN);
+            let gy = t.gaze_y_series[i].unwrap_or(f64::NAN);
             if !gx.is_nan() && !gy.is_nan() {
                 all_gx.push(gx);
                 all_gy.push(gy);
@@ -865,9 +868,9 @@ mod tests {
                 trial_num: 1, block_num: 1, load: 1, distractor_type: 3,
                 response: Some("f".to_string()), reaction_time: 0.7,
                 correct: true,
-                pupil_series: pupil.iter().map(|&v| v as f32).collect(),
-                gaze_x_series: vec![500.0; total_frames],
-                gaze_y_series: vec![500.0; total_frames],
+                pupil_series: pupil.iter().map(|&v| Some(v as f32)).collect(),
+                gaze_x_series: vec![Some(500.0); total_frames],
+                gaze_y_series: vec![Some(500.0); total_frames],
             };
             let features = extract_features(&[trial], fps);
             let slope = features["pupil_slope"];

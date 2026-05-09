@@ -1,5 +1,6 @@
 <script>
   import { invoke } from '@tauri-apps/api/core';
+  import { attachConsole } from '@tauri-apps/plugin-log';
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import '../app.css';
@@ -10,6 +11,12 @@
   let healthError = $state(false);
 
   onMount(async () => {
+    try {
+      await attachConsole();
+    } catch (e) {
+      console.warn('Failed to attach console logger:', e);
+    }
+
     try {
       health = await invoke('get_health');
     } catch (e) {

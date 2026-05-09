@@ -2101,6 +2101,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "horus"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "env_logger",
+ "image",
+ "log",
+ "nalgebra",
+ "ndarray",
+ "nokhwa",
+ "once_cell",
+ "parking_lot",
+ "rand 0.8.5",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-opener",
+ "tokio",
+ "tract-onnx",
+ "tract-tflite",
+ "uuid",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.29.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5308,34 +5336,6 @@ dependencies = [
  "webview2-com",
  "window-vibrancy",
  "windows 0.61.3",
-]
-
-[[package]]
-name = "tauri-adhd"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "chrono",
- "env_logger",
- "image",
- "log",
- "nalgebra",
- "ndarray",
- "nokhwa",
- "once_cell",
- "parking_lot",
- "rand 0.8.5",
- "rusqlite",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-opener",
- "tokio",
- "tract-onnx",
- "tract-tflite",
- "uuid",
 ]
 
 [[package]]

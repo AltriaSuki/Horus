@@ -39,6 +39,17 @@
   // Live gaze prediction (x, y in screen pixels) — updated by gaze_frame events
   let lastGaze = { x: null, y: null, ts: 0 };
 
+  // Per-point multi-sample collection (like training calibration)
+  let collecting = $state(false);       // true while auto-collecting samples for current point
+  let collectStartTime = $state(0);     // performance.now() when collection started
+  let collectSamples = $state(0);       // successful samples collected so far
+  let collectIntervalId = null;         // setInterval handle
+
+  const SETTLE_MS = 300;        // settling time before collection starts
+  const COLLECT_MS = 3000;      // collection window (3s → ~3-4 samples at 1fps)
+  const SAMPLE_INTERVAL = 200;  // attempt a sample every 200ms
+  const MIN_SAMPLES = 2;        // minimum successful samples to accept the point
+
   // Validation error collection
   let validationErrors = [];
   let validationBuffer = [];
@@ -106,6 +117,7 @@
     if (errorBannerTimer) clearTimeout(errorBannerTimer);
     if (doneTimer) clearTimeout(doneTimer);
     if (postCalibTimer) clearTimeout(postCalibTimer);
+    if (collectIntervalId) clearInterval(collectIntervalId);
     for (const t of pendingTimers) clearTimeout(t);
     pendingTimers = [];
     if (canvas) canvas.removeEventListener('click', handleClick);
@@ -137,12 +149,13 @@
       pendingTimers = [];
       if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
       if (postCalibTimer) { clearTimeout(postCalibTimer); postCalibTimer = null; }
+      if (collectIntervalId) { clearInterval(collectIntervalId); collectIntervalId = null; }
       if (onCancel) onCancel();
     }
   }
 
   async function handleClick(e) {
-    if (mode !== 'calibrating' || !currentPoint || showResult) return;
+    if (mode !== 'calibrating' || !currentPoint || showResult || collecting) return;
     if (isDestroyed) return;
 
     // Get click position in CSS pixels
@@ -158,44 +171,74 @@
     const dist = Math.hypot(clickX - targetX, clickY - targetY);
     if (dist > CLICK_RADIUS) return; // ignore clicks too far away
 
+    // --- Multi-sample collection: click starts auto-collecting for this point ---
+    collecting = true;
+    collectStartTime = performance.now();
+    collectSamples = 0;
+
+    collectIntervalId = setInterval(async () => {
+      if (isDestroyed) { stopCollecting(); return; }
+      const elapsed = performance.now() - collectStartTime;
+
+      // Still settling — don't collect yet
+      if (elapsed < SETTLE_MS) return;
+
+      // Collection window finished — finalize this point
+      if (elapsed >= SETTLE_MS + COLLECT_MS) {
+        stopCollecting();
+        if (collectSamples >= MIN_SAMPLES) {
+          recordCalibrationPoint();
+          currentPointIndex++;
+          if (currentPointIndex >= calibrationPoints.length) {
+            await finishAllCalibration();
+          }
+        } else {
+          showErrorBanner(`采样不足(${collectSamples}/${MIN_SAMPLES})，请重试此点`);
+        }
+        return;
+      }
+
+      // Try to collect a sample
+      try {
+        await invoke('submit_calibration_sample', {
+          screenX: targetX,
+          screenY: targetY,
+        });
+        collectSamples++;
+      } catch (_err) {
+        // face not detected for this sample — skip silently, keep trying
+      }
+    }, SAMPLE_INTERVAL);
+  }
+
+  function stopCollecting() {
+    if (collectIntervalId) {
+      clearInterval(collectIntervalId);
+      collectIntervalId = null;
+    }
+    collecting = false;
+  }
+
+  async function finishAllCalibration() {
     try {
-      await invoke('submit_calibration_sample', {
-        screenX: targetX,
-        screenY: targetY,
-      });
-      if (isDestroyed) return;
-      recordCalibrationPoint();
+      await invoke('finish_calibration');
     } catch (err) {
       if (isDestroyed) return;
       const msg = typeof err === 'string' ? err : (err?.message ?? String(err));
-      console.error('Calibration sample error:', msg);
-      showErrorBanner(msg.includes('人脸') ? '未检测到人脸，请调整位置' : msg);
-      return; // do not advance; user retries this point
+      console.error('Finish calibration error:', msg);
+      showErrorBanner(msg);
     }
-
-    currentPointIndex++;
-
-    if (currentPointIndex >= calibrationPoints.length) {
-      try {
-        await invoke('finish_calibration');
-      } catch (err) {
-        if (isDestroyed) return;
-        const msg = typeof err === 'string' ? err : (err?.message ?? String(err));
-        console.error('Finish calibration error:', msg);
-        showErrorBanner(msg);
-      }
+    if (isDestroyed) return;
+    // Briefly show "校准完成，进入验证" then run validation to get real error.
+    showResult = true;
+    postCalibTimer = setTimeout(() => {
+      postCalibTimer = null;
       if (isDestroyed) return;
-      // Briefly show "校准完成，进入验证" then run validation to get real error.
-      showResult = true;
-      postCalibTimer = setTimeout(() => {
-        postCalibTimer = null;
-        if (isDestroyed) return;
-        showResult = false;
-        mode = 'validating';
-        currentPointIndex = 0;
-        startValidation();
-      }, 1500);
-    }
+      showResult = false;
+      mode = 'validating';
+      currentPointIndex = 0;
+      startValidation();
+    }, 1500);
   }
 
   function showErrorBanner(text) {
@@ -222,17 +265,18 @@
       validationBuffer = [];
       validationCollecting = false;
 
-      // First 1000ms: let the eyes settle. Last 500ms: collect gaze samples.
+      // First 1500ms: let the eyes settle. Last 2000ms: collect gaze samples.
+      // Needs generous windows because some cameras only deliver 1-3 fps.
       const t1 = setTimeout(() => {
         if (isDestroyed) return;
         validationBuffer = [];
         validationCollecting = true;
-      }, 1000);
+      }, 1500);
       pendingTimers.push(t1);
       const t2 = setTimeout(() => {
         if (isDestroyed) return;
         validationCollecting = false;
-        if (validationBuffer.length < 5) {
+        if (validationBuffer.length < 2) {
           validationErrors.push(NaN);
         } else {
           let sx = 0, sy = 0;
@@ -243,7 +287,7 @@
         }
         idx++;
         showNext();
-      }, 1500);
+      }, 3500);
       pendingTimers.push(t2);
     }
     showNext();
@@ -252,9 +296,9 @@
   function finalizeValidation() {
     if (isDestroyed) return;
     const valid = validationErrors.filter((e) => Number.isFinite(e));
-    if (valid.length < 2) {
+    if (valid.length < 1) {
       meanError = -1;
-      showErrorBanner('校准质量不足，建议重做');
+      showErrorBanner('验证阶段未能稳定采集到注视数据');
     } else {
       meanError = valid.reduce((a, b) => a + b, 0) / valid.length;
     }
@@ -287,6 +331,7 @@
     isDestroyed = true;
     if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
     if (postCalibTimer) { clearTimeout(postCalibTimer); postCalibTimer = null; }
+    if (collectIntervalId) { clearInterval(collectIntervalId); collectIntervalId = null; }
     for (const t of pendingTimers) clearTimeout(t);
     pendingTimers = [];
     if (onCancel) onCancel();
@@ -310,14 +355,16 @@
     // This prevents the text from overlapping the calibration dot.
     const bannerH = 48;
     const bannerText = mode === 'calibrating'
-      ? `[${currentPointIndex + 1}/${calibrationPoints.length}]  请注视圆点并点击`
+      ? (collecting
+          ? `[${currentPointIndex + 1}/${calibrationPoints.length}]  正在采集... (${collectSamples} 样本)`
+          : `[${currentPointIndex + 1}/${calibrationPoints.length}]  请注视圆点并点击`)
       : mode === 'validating'
         ? `[${currentPointIndex + 1}/${validationPoints.length}]  请注视圆点 (不用点击)`
         : '';
 
     if (bannerText && !showResult && currentPoint) {
       const bannerColor = mode === 'calibrating' ? '#FF8C42' : '#4ECDC4';
-      const bannerWidth = Math.min(440, w - 60);
+      const bannerWidth = Math.min(500, w - 60);
       // Fixed vertical position between rows to prevent overlapping and jumping (y = 80%)
       const bannerY = h * 0.80 - bannerH / 2;
 
@@ -412,7 +459,7 @@
   }
 
   function drawTarget(x, y, time) {
-    const pulse = 1 + 0.18 * Math.sin(time * 3);
+    const pulse = collecting ? 1 : (1 + 0.18 * Math.sin(time * 3));
     const outerR = 30 * pulse;
     const innerR = 10;
 
@@ -432,6 +479,48 @@
     ctx.strokeStyle = '#4ECDC4';
     ctx.lineWidth = 3;
     ctx.stroke();
+
+    // Progress ring — shows collection progress as a sweeping arc
+    if (collecting) {
+      const elapsed = performance.now() - collectStartTime;
+      const totalDuration = SETTLE_MS + COLLECT_MS;
+      const progress = Math.min(1, elapsed / totalDuration);
+      const startAngle = -Math.PI / 2;
+      const endAngle = startAngle + progress * Math.PI * 2;
+      const progressR = outerR + 8;
+
+      // Background track
+      ctx.beginPath();
+      ctx.arc(x, y, progressR, 0, Math.PI * 2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 5;
+      ctx.stroke();
+
+      // Progress arc
+      ctx.beginPath();
+      ctx.arc(x, y, progressR, startAngle, endAngle);
+      ctx.strokeStyle = elapsed < SETTLE_MS ? '#FFD166' : '#4ECDC4';
+      ctx.lineWidth = 5;
+      ctx.lineCap = 'round';
+      ctx.stroke();
+      ctx.lineCap = 'butt';
+
+      // Sample count badge
+      if (collectSamples > 0) {
+        const badgeR = 12;
+        const badgeX = x + outerR + 14;
+        const badgeY = y - outerR - 4;
+        ctx.beginPath();
+        ctx.arc(badgeX, badgeY, badgeR, 0, Math.PI * 2);
+        ctx.fillStyle = '#4ECDC4';
+        ctx.fill();
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = '700 12px "PingFang SC", "Microsoft YaHei", sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${collectSamples}`, badgeX, badgeY);
+      }
+    }
 
     // Inner disc
     ctx.beginPath();

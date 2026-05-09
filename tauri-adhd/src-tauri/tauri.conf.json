@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "tauri-adhd",
+  "productName": "Horus",
   "version": "0.1.0",
-  "identifier": "com.feilun.tauri-adhd",
+  "identifier": "com.feilun.horus",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "tauri-adhd",
+        "title": "Horus",
         "width": 800,
         "height": 600
       }
@@ -23,7 +23,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
+    "resources": {
+      "../models": "models",
+      "../scripts/eye_tracker_server.py": "scripts/eye_tracker_server.py",
+      "../scripts/model_pth": "scripts/model_pth",
+      "../../eyetrack package": "eyetrack package"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

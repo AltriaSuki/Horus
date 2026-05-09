@@ -8,6 +8,7 @@
     phase,
     PHASES,
     resetSession,
+    setTaskConfig,
   } from '$lib/stores/session.js';
 
   let subjects = $state([]);
@@ -18,6 +19,8 @@
   let loadingSubjects = $state(true);
   // 'idle' | 'permission' — show camera permission explanation modal
   let stage = $state('idle');
+  let testBlocks = $state(8);
+  let testTrialsPerBlock = $state(20);
 
   onMount(async () => {
     try {
@@ -62,6 +65,10 @@
       currentSubject.set(subject);
       phase.set(PHASES.CALIBRATING);
 
+        setTaskConfig({
+          totalBlocks: testBlocks,
+          trialsPerBlock: testTrialsPerBlock,
+        });
       goto('/screening/running');
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
@@ -97,6 +104,20 @@
     </div>
     <h1 class="hero-title">视觉记忆挑战</h1>
     <p class="hero-subtitle">Sternberg 工作记忆范式 -- 注意力早期筛查</p>
+  </div>
+
+  <!-- Child-friendly guidance -->
+  <div class="guide-card animate-fade-in stagger-1">
+    <div class="guide-badge">指导语</div>
+    <div class="guide-content">
+      <h2 class="guide-title">小朋友先听我说</h2>
+      <p class="guide-text">
+        先跟着屏幕上的小提示做。<br />
+        你要记住圆点有没有出现过。<br />
+        见过的按 1，没见过的按 2。按主键盘或数字小键盘的 1/2 都可以。<br />
+        坐好一点，眼睛看着屏幕，慢慢来就行。
+      </p>
+    </div>
   </div>
 
   <!-- Steps guide -->
@@ -151,6 +172,35 @@
   {#if error && stage === 'idle'}
     <div class="error-msg animate-fade-in">{error}</div>
   {/if}
+
+  <div class="test-config-section animate-fade-in stagger-4">
+    <h2 class="section-title">测试配置</h2>
+    <p class="config-hint">调小后可快速验证流程与报告保存（正式使用建议 8 x 20）</p>
+    <div class="config-grid">
+      <label class="config-item">
+        <span>Block 数</span>
+        <input
+          class="input-field"
+          type="number"
+          min="1"
+          max="20"
+          value={testBlocks}
+          oninput={(e) => { testBlocks = Math.max(1, Number(e.currentTarget.value) || 1); }}
+        />
+      </label>
+      <label class="config-item">
+        <span>每 Block 题数</span>
+        <input
+          class="input-field"
+          type="number"
+          min="1"
+          max="50"
+          value={testTrialsPerBlock}
+          oninput={(e) => { testTrialsPerBlock = Math.max(1, Number(e.currentTarget.value) || 1); }}
+        />
+      </label>
+    </div>
+  </div>
 
   <!-- Start button -->
   <div class="start-section">
@@ -217,6 +267,46 @@
     box-shadow: var(--shadow-lg);
     border: 4px solid rgba(255, 255, 255, 0.4);
   }
+
+  .guide-card {
+    display: flex;
+    gap: var(--space-md);
+    align-items: flex-start;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: 24px;
+    padding: var(--space-lg);
+    margin-bottom: var(--space-xl);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
+  }
+  .guide-badge {
+    flex-shrink: 0;
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: var(--primary-light);
+    color: var(--primary-dark);
+    font-size: 12px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+  }
+  .guide-content {
+    min-width: 0;
+  }
+  .guide-title {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text);
+  }
+  .guide-text {
+    margin: 0;
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--text-muted);
+  }
+
   .hero-bg {
     display: flex;
     justify-content: center;
@@ -303,6 +393,30 @@
     display: flex;
     justify-content: center;
     padding: var(--space-md) 0;
+  }
+  .test-config-section {
+    margin-bottom: var(--space-lg);
+    padding: var(--space-md);
+    background: var(--surface-solid);
+    border-radius: var(--radius-lg);
+    border: 2px dashed rgba(255, 140, 66, 0.35);
+  }
+  .config-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-md);
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+  .config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 600;
   }
   .start-btn {
     font-size: var(--font-size-xl);

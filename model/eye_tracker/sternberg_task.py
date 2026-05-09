@@ -10,7 +10,7 @@ Sternberg Visual Spatial Working Memory Task
      - Load=1: 每array 1点，共3点
      - Load=2: 每array 2点，共6点
   3. Distractor (500ms): blank/neutral/emotional/task-related
-  4. Probe (1500ms): 按 F=出现过 / J=没出现过
+    4. Probe (1500ms): 按 1=出现过 / 2=没出现过（主键盘或小键盘）
   5. Feedback (500ms): Correct / Incorrect
 
 总计: 8 blocks × 20 trials = 160 trials
@@ -439,7 +439,7 @@ class SternbergTask:
         self.screen.fill((0, 0, 0))
         px, py = self._grid_to_px(*pos)
         pygame.draw.circle(self.screen, (255, 220, 50), (px, py), self.dot_r + 3)
-        hint = self.font_sm.render("F = 是    J = 否", True, (150, 150, 150))
+        hint = self.font_sm.render("1 = 出现过    2 = 没出现过（主键盘或小键盘）", True, (150, 150, 150))
         self.screen.blit(hint, (self.sw // 2 - hint.get_width() // 2, self.sh - 60))
 
     def _draw_feedback(self, is_correct):
@@ -511,11 +511,11 @@ class SternbergTask:
                     if event.key == pygame.K_ESCAPE:
                         raise KeyboardInterrupt
                     if check_keys and response is None:
-                        if event.key == pygame.K_f:
-                            response = 'f'
+                        if event.key in (pygame.K_1, pygame.K_KP1):
+                            response = '1'
                             rt = time.perf_counter() - t_start
-                        elif event.key == pygame.K_j:
-                            response = 'j'
+                        elif event.key in (pygame.K_2, pygame.K_KP2):
+                            response = '2'
                             rt = time.perf_counter() - t_start
 
             # 眼动数据采集
@@ -546,13 +546,13 @@ class SternbergTask:
             "  2. 记住圆点的位置（共 3 屏）",
             "  3. 忽略干扰画面",
             "  4. 出现探测圆点时：",
-            "     按 F 键 —— 该位置出现过",
-            "     按 J 键 —— 该位置没出现过",
+            "     按 1 键 —— 该位置出现过（主键盘或小键盘）",
+            "     按 2 键 —— 该位置没出现过（主键盘或小键盘）",
             "",
             f"共 {self.cfg['n_blocks']} 个区组 × "
             f"{self.cfg['trials_per_block']} 个试次",
             "",
-            "按 空格键 开始",
+            "按任意键 开始",
         ]
         y = self.sh // 2 - len(lines) * 18
         for line in lines:
@@ -580,7 +580,7 @@ class SternbergTask:
             "",
             "请稍作休息",
             "",
-            "按 空格键 继续",
+            "按任意键 继续",
         ]
         y = self.sh // 2 - len(lines) * 25
         for line in lines:

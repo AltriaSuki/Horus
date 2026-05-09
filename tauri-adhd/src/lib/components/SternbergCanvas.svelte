@@ -18,13 +18,12 @@
     recordTrial,
     phase,
     PHASES,
-    TOTAL_TRIALS,
-    TRIALS_PER_BLOCK,
-    TOTAL_BLOCKS,
   } from '$lib/stores/session.js';
 
-  /** @type {{ onAllDone: () => void, onCancel?: () => void }} */
-  let { onAllDone, onCancel } = $props();
+  /** @type {{ onAllDone: () => void, onCancel?: () => void, totalBlocks?: number, trialsPerBlock?: number }} */
+  let { onAllDone, onCancel, totalBlocks = 8, trialsPerBlock = 20 } = $props();
+
+  const totalTrials = Math.max(1, totalBlocks * trialsPerBlock);
 
   // ─── ESC confirm-exit overlay (Bug C) ────────────────────────────
   // When true, the render loop paints a modal over the current phase
@@ -158,20 +157,31 @@
   // Trial plan generation
   // ═══════════════════════════════════════════════════════════════
   function generateTrialPlan() {
-    // Balanced crossed randomization:
-    // 2 loads x 4 distractors x 2 targets = 16 cells, 10 trials each = 160 trials total.
     const plan = [];
-    const cellReps = TOTAL_TRIALS / (2 * DISTRACTOR_TYPES.length * 2);
+
+    // Build a base pool of 16 condition combinations.
+    const combos = [];
     for (const load of [1, 2]) {
       for (const dType of DISTRACTOR_TYPES) {
         for (const isTarget of [true, false]) {
-          for (let rep = 0; rep < cellReps; rep++) {
-            // trialNum/blockNum/trialInBlock filled in after shuffle below.
-            plan.push({ load, distractorType: dType, isTarget, trialNum: 0, blockNum: 0, trialInBlock: 0 });
-          }
+          combos.push({ load, distractorType: dType, isTarget });
         }
       }
     }
+
+    // Repeat combos to fill requested total trial count.
+    for (let i = 0; i < totalTrials; i++) {
+      const c = combos[i % combos.length];
+      plan.push({
+        load: c.load,
+        distractorType: c.distractorType,
+        isTarget: c.isTarget,
+        trialNum: 0,
+        blockNum: 0,
+        trialInBlock: 0,
+      });
+    }
+
     // Fisher-Yates shuffle globally across all 160 trials
     for (let i = plan.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
@@ -180,29 +190,8 @@
     // Assign trialNum / blockNum / trialInBlock AFTER shuffle
     for (let i = 0; i < plan.length; i++) {
       plan[i].trialNum = i + 1;
-      plan[i].blockNum = Math.floor(i / TRIALS_PER_BLOCK) + 1;
-      plan[i].trialInBlock = (i % TRIALS_PER_BLOCK) + 1;
-    }
-    // Verify cell balance (dev sanity check)
-    console.assert(plan.length === TOTAL_TRIALS, `trialPlan length ${plan.length} !== TOTAL_TRIALS ${TOTAL_TRIALS}`);
-    console.assert(plan.filter((p) => p.load === 1).length === TOTAL_TRIALS / 2, 'load=1 count imbalance');
-    console.assert(plan.filter((p) => p.load === 2).length === TOTAL_TRIALS / 2, 'load=2 count imbalance');
-    for (const dType of DISTRACTOR_TYPES) {
-      console.assert(
-        plan.filter((p) => p.distractorType === dType).length === TOTAL_TRIALS / DISTRACTOR_TYPES.length,
-        `distractor=${dType} count imbalance`,
-      );
-    }
-    console.assert(plan.filter((p) => p.isTarget).length === TOTAL_TRIALS / 2, 'isTarget count imbalance');
-    for (const load of [1, 2]) {
-      for (const dType of DISTRACTOR_TYPES) {
-        for (const isTarget of [true, false]) {
-          const cellCount = plan.filter(
-            (p) => p.load === load && p.distractorType === dType && p.isTarget === isTarget,
-          ).length;
-          console.assert(cellCount === cellReps, `cell (load=${load}, d=${dType}, t=${isTarget}) = ${cellCount}, expected ${cellReps}`);
-        }
-      }
+      plan[i].blockNum = Math.floor(i / trialsPerBlock) + 1;
+      plan[i].trialInBlock = (i % trialsPerBlock) + 1;
     }
     return plan;
   }
@@ -305,10 +294,8 @@
 
     switch (taskPhase) {
       case 'intro':
-        // Show intro for 3 seconds, then start first trial
-        if (elapsed >= 3000) {
-          startNextTrial();
-        }
+        // Wait for user to press any key to start (changed from timed start)
+        // Intro will start when handleKeyDown detects a non-Escape key.
         break;
 
       case 'fixation':
@@ -368,10 +355,7 @@
         break;
 
       case 'break':
-        // Break lasts until user presses space or 8 seconds
-        if (elapsed >= 8000) {
-          startNextTrial();
-        }
+        // Break lasts until user presses space.
         break;
 
       case 'complete':
@@ -395,6 +379,8 @@
     // Determine correctness
     const correct = determineCorrect();
 
+    const sanitizeSeries = (series) => series.map((v) => (Number.isFinite(v) ? v : null));
+
     const trialResult = {
       trial_num: trialNum,
       block_num: blockNum,
@@ -403,10 +389,10 @@
       response: responseKey,
       reaction_time: isNaN(responseTime) ? 0.0 : responseTime / 1000, // to seconds (0 if no response)
       correct: correct,
-      // Preserve NaN placeholders (invalid frames) — backend skips them via .is_nan()
-      pupil_series: pupilSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
-      gaze_x_series: gazeXSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
-      gaze_y_series: gazeYSeries.map((v) => (typeof v === 'number' ? v : Number(v))),
+      // Keep placeholders as null so Rust can treat them as invalid samples.
+      pupil_series: sanitizeSeries(pupilSeries),
+      gaze_x_series: sanitizeSeries(gazeXSeries),
+      gaze_y_series: sanitizeSeries(gazeYSeries),
     };
 
     // Send to Rust
@@ -422,15 +408,15 @@
 
   function determineCorrect() {
     if (!responseKey) return false;
-    // 'f' = target was present, 'j' = target was not present
-    if (probeIsTarget && responseKey === 'f') return true;
-    if (!probeIsTarget && responseKey === 'j') return true;
+    // '1' = target was present, '2' = target was not present
+    if (probeIsTarget && responseKey === '1') return true;
+    if (!probeIsTarget && responseKey === '2') return true;
     return false;
   }
 
   function advanceAfterFeedback() {
     // Check if end of block
-    if (trialInBlock >= TRIALS_PER_BLOCK && blockNum < TOTAL_BLOCKS) {
+    if (trialInBlock >= trialsPerBlock && blockNum < totalBlocks) {
       enterPhase('break');
       return;
     }
@@ -461,17 +447,24 @@
     // accidentally answer the probe underneath.
     if (showExitConfirm) return;
 
+    // Start trial from intro on any non-escape key
+    if (taskPhase === 'intro') {
+      startNextTrial();
+      return;
+    }
+
     if (taskPhase === 'probe' && !responseKey) {
-      if (e.key === 'f' || e.key === 'F') {
-        responseKey = 'f';
+      // Accept main-row '1' or '2' and numpad 'Numpad1'/'Numpad2'
+      if (e.key === '1' || e.code === 'Numpad1') {
+        responseKey = '1';
         responseTime = performance.now() - probeOnsetTime;
         finishTrial();
-      } else if (e.key === 'j' || e.key === 'J') {
-        responseKey = 'j';
+      } else if (e.key === '2' || e.code === 'Numpad2') {
+        responseKey = '2';
         responseTime = performance.now() - probeOnsetTime;
         finishTrial();
       }
-    } else if (taskPhase === 'break' && (e.key === ' ' || e.key === 'Enter')) {
+    } else if (taskPhase === 'break' && e.key === ' ') {
       startNextTrial();
     }
   }
@@ -587,7 +580,7 @@
     ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
     const completed = Math.max(0, planCursor - 1);
     ctx.fillText(
-      `已完成 ${completed} / ${TOTAL_TRIALS} 题，退出后数据将保留`,
+      `已完成 ${completed} / ${totalTrials} 题，退出后数据将保留`,
       cardX + cardW / 2,
       cardY + 96,
     );
@@ -722,16 +715,16 @@
 
     ctx.fillStyle = '#4ECDC4';
     ctx.font = '700 18px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('F = 出现过      J = 没出现过', screenW / 2, screenH / 2 + 40);
+    ctx.fillText('1 = 出现过      2 = 没出现过（主键盘或小键盘）', screenW / 2, screenH / 2 + 40);
 
     ctx.fillStyle = '#8B6F5C';
     ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('即将开始...', screenW / 2, screenH / 2 + 90);
+    ctx.fillText('按任意键开始', screenW / 2, screenH / 2 + 90);
 
     // Trial info
     ctx.fillStyle = '#FF8C42';
     ctx.font = '600 14px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText(`共 ${TOTAL_BLOCKS} 关 x ${TRIALS_PER_BLOCK} 题`, screenW / 2, screenH / 2 + 130);
+    ctx.fillText(`共 ${totalBlocks} 关 x ${trialsPerBlock} 题`, screenW / 2, screenH / 2 + 130);
   }
 
   function drawFixation(_now) {
@@ -844,7 +837,7 @@
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255, 248, 240, 0.5)';
     ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText('F = 出现过      J = 没出现过', screenW / 2, screenH - 40);
+    ctx.fillText('1 = 出现过      2 = 没出现过（主键盘或小键盘）', screenW / 2, screenH - 40);
   }
 
   function drawFeedback(_now) {
@@ -934,12 +927,16 @@
     ctx.font = '600 22px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(breakMessages[msgIndex], cx, cy);
 
+    ctx.fillStyle = '#8B6F5C';
+    ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
+    ctx.fillText('建议休息 1 分钟', cx, cy + 34);
+
     // Progress bar
     const barW = screenW * 0.5;
     const barH = 12;
     const barX = cx - barW / 2;
     const barY = cy + 40;
-    const progress = blockNum / TOTAL_BLOCKS;
+    const progress = blockNum / totalBlocks;
 
     ctx.fillStyle = '#E8DDD4';
     drawRoundRect(barX, barY, barW, barH, 6);
@@ -951,7 +948,7 @@
 
     ctx.fillStyle = '#8B6F5C';
     ctx.font = '500 14px "PingFang SC", "Microsoft YaHei", sans-serif';
-    ctx.fillText(`${blockNum} / ${TOTAL_BLOCKS}`, cx, barY + 36);
+    ctx.fillText(`${blockNum} / ${totalBlocks}`, cx, barY + 36);
 
     // Continue hint
     const pulse = 0.5 + 0.5 * Math.sin(((now - phaseStartTime) / 1000) * 2);
@@ -1025,16 +1022,15 @@
       // Only sample while a trial is active and in a sampling-whitelisted phase.
       if (trialNum === 0 || !GAZE_SAMPLING_PHASES.has(taskPhase)) return;
 
-      // Invalid frames (or NaN coords) still push NaN placeholders so the
-      // time axis stays aligned; downstream feature extraction skips NaN.
+      // Invalid frames push null placeholders to keep alignment without NaN in IPC payloads.
       if (valid && Number.isFinite(x) && Number.isFinite(y) && Number.isFinite(pupil)) {
         pupilSeries.push(pupil);
         gazeXSeries.push(x);
         gazeYSeries.push(y);
       } else {
-        pupilSeries.push(NaN);
-        gazeXSeries.push(NaN);
-        gazeYSeries.push(NaN);
+        pupilSeries.push(null);
+        gazeXSeries.push(null);
+        gazeYSeries.push(null);
       }
     });
 

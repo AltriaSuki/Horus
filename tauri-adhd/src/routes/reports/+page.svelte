@@ -9,6 +9,9 @@
   let sessions = $state([]);
   let loadingSubjects = $state(true);
   let loadingSessions = $state(false);
+  let deletingSessionId = $state('');
+  let deletingBatch = $state(false);
+  let selectedSessionIds = $state([]);
   let error = $state(null);
 
   onMount(async () => {
@@ -34,6 +37,7 @@
     error = null;
     try {
       sessions = await invoke('list_subject_sessions', { subjectId: selectedSubjectId });
+      selectedSessionIds = [];
     } catch (e) {
       error = '加载历史记录失败: ' + e;
       console.error(e);
@@ -60,6 +64,59 @@
       }
     } catch (e) {
       error = '加载报告失败: ' + e;
+    }
+  }
+
+  async function deleteReport(session, e) {
+    e.stopPropagation();
+    const sessionId = session.session_id || session.id;
+    const ok = window.confirm('确定删除这条筛查报告和相关记录吗？此操作不可恢复。');
+    if (!ok) return;
+
+    deletingSessionId = sessionId;
+    error = null;
+    try {
+      await invoke('delete_session', { sessionId });
+      sessions = sessions.filter((s) => (s.session_id || s.id) !== sessionId);
+      selectedSessionIds = selectedSessionIds.filter((id) => id !== sessionId);
+    } catch (e) {
+      error = '删除失败: ' + e;
+    } finally {
+      deletingSessionId = '';
+    }
+  }
+
+  function toggleSessionSelection(sessionId) {
+    if (selectedSessionIds.includes(sessionId)) {
+      selectedSessionIds = selectedSessionIds.filter((id) => id !== sessionId);
+    } else {
+      selectedSessionIds = [...selectedSessionIds, sessionId];
+    }
+  }
+
+  function toggleSelectAll() {
+    if (selectedSessionIds.length === sessions.length) {
+      selectedSessionIds = [];
+    } else {
+      selectedSessionIds = sessions.map((s) => s.session_id || s.id);
+    }
+  }
+
+  async function deleteSelectedReports() {
+    if (selectedSessionIds.length === 0) return;
+    const ok = window.confirm(`确定删除已选中的 ${selectedSessionIds.length} 条筛查记录吗？此操作不可恢复。`);
+    if (!ok) return;
+
+    deletingBatch = true;
+    error = null;
+    try {
+      await invoke('delete_sessions', { sessionIds: selectedSessionIds });
+      sessions = sessions.filter((s) => !selectedSessionIds.includes(s.session_id || s.id));
+      selectedSessionIds = [];
+    } catch (e) {
+      error = '批量删除失败: ' + e;
+    } finally {
+      deletingBatch = false;
     }
   }
 
@@ -161,14 +218,66 @@
         <p class="empty-desc">完成一次筛查后，记录将在这里显示</p>
       </div>
     {:else}
+      <div class="batch-toolbar card">
+        <label class="select-all">
+          <input
+            type="checkbox"
+            checked={sessions.length > 0 && selectedSessionIds.length === sessions.length}
+            onchange={toggleSelectAll}
+          />
+          <span>全选</span>
+        </label>
+        <div class="batch-right">
+          <span class="selected-count">已选 {selectedSessionIds.length} 条</span>
+          <button
+            class="btn-delete-batch"
+            onclick={deleteSelectedReports}
+            disabled={selectedSessionIds.length === 0 || deletingBatch}
+          >
+            {#if deletingBatch}
+              批量删除中...
+            {:else}
+              批量删除
+            {/if}
+          </button>
+        </div>
+      </div>
+
       <div class="sessions-list">
         {#each sessions as session, i}
-          <button class="session-card card animate-fade-in stagger-{(i % 5) + 1}" onclick={() => viewReport(session)}>
+          <div
+            class="session-card card animate-fade-in stagger-{(i % 5) + 1}"
+            role="button"
+            tabindex="0"
+            onclick={() => viewReport(session)}
+            onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && viewReport(session)}
+          >
             <div class="session-header">
-              <span class="session-num">第 {sessions.length - i} 次筛查</span>
-              <span class="badge {statusBadgeClass(session.status)}">
-                {statusLabel(session.status)}
-              </span>
+              <div class="session-left">
+                <input
+                  type="checkbox"
+                  checked={selectedSessionIds.includes(session.session_id || session.id)}
+                  onclick={(e) => e.stopPropagation()}
+                  onchange={() => toggleSessionSelection(session.session_id || session.id)}
+                />
+                <span class="session-num">第 {sessions.length - i} 次筛查</span>
+              </div>
+              <div class="session-actions">
+                <span class="badge {statusBadgeClass(session.status)}">
+                  {statusLabel(session.status)}
+                </span>
+                <button
+                  class="btn-delete"
+                  onclick={(e) => deleteReport(session, e)}
+                  disabled={deletingSessionId === (session.session_id || session.id)}
+                >
+                  {#if deletingSessionId === (session.session_id || session.id)}
+                    删除中...
+                  {:else}
+                    删除
+                  {/if}
+                </button>
+              </div>
             </div>
             <div class="session-meta">
               <span class="session-date">{formatDate(session.created_at)}</span>
@@ -181,7 +290,7 @@
                 <path d="M6 3l5 5-5 5" />
               </svg>
             </div>
-          </button>
+          </div>
         {/each}
       </div>
     {/if}
@@ -253,6 +362,43 @@
     flex-direction: column;
     gap: var(--space-md);
   }
+  .batch-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: var(--space-md);
+    padding: 12px 14px;
+  }
+  .select-all {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .batch-right {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .selected-count {
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .btn-delete-batch {
+    border: 1px solid #E94F4F;
+    background: #E94F4F;
+    color: #fff;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-delete-batch:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
   .session-card {
     display: flex;
     flex-direction: column;
@@ -271,6 +417,16 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+  }
+  .session-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .session-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .session-num {
     font-size: var(--font-size-lg);
@@ -295,6 +451,24 @@
     right: var(--space-lg);
     top: 50%;
     transform: translateY(-50%);
+  }
+
+  .btn-delete {
+    border: 1px solid #E94F4F;
+    background: #FFF5F5;
+    color: #E94F4F;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .btn-delete:hover:enabled {
+    background: #FFEAEA;
+  }
+  .btn-delete:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 
   /* Badges */

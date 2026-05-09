@@ -147,6 +147,33 @@ pub fn list_subjects() -> anyhow::Result<Vec<Subject>> {
     Ok(rows)
 }
 
+/// Delete one subject and all data associated with their sessions.
+pub fn delete_subject(subject_id: &str) -> anyhow::Result<()> {
+    let conn = db().lock().unwrap();
+    let tx = conn.unchecked_transaction()?;
+
+    tx.execute(
+        "DELETE FROM adhd_reports
+         WHERE session_id IN (SELECT id FROM sessions WHERE subject_id = ?1)",
+        params![subject_id],
+    )?;
+    tx.execute(
+        "DELETE FROM trials
+         WHERE session_id IN (SELECT id FROM sessions WHERE subject_id = ?1)",
+        params![subject_id],
+    )?;
+    tx.execute(
+        "DELETE FROM calibrations
+         WHERE session_id IN (SELECT id FROM sessions WHERE subject_id = ?1)",
+        params![subject_id],
+    )?;
+    tx.execute("DELETE FROM sessions WHERE subject_id = ?1", params![subject_id])?;
+    tx.execute("DELETE FROM subjects WHERE id = ?1", params![subject_id])?;
+
+    tx.commit()?;
+    Ok(())
+}
+
 pub fn create_session(id: &str, subject_id: &str, kind: &str, mode: &str) -> anyhow::Result<SessionRow> {
     let conn = db().lock().unwrap();
     conn.execute(
@@ -310,6 +337,20 @@ pub fn list_subject_sessions(subject_id: &str) -> anyhow::Result<Vec<SessionRow>
         })
     })?.collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Delete one screening session and all report/trial/calibration rows linked to it.
+pub fn delete_session(session_id: &str) -> anyhow::Result<()> {
+    let conn = db().lock().unwrap();
+    let tx = conn.unchecked_transaction()?;
+
+    tx.execute("DELETE FROM adhd_reports WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM trials WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM calibrations WHERE session_id = ?1", params![session_id])?;
+    tx.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
+
+    tx.commit()?;
+    Ok(())
 }
 
 // ─── Trial-level persistence ────────────────────────────────────────

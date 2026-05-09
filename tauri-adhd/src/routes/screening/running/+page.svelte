@@ -11,11 +11,11 @@
     totalTrialsCompleted,
     currentBlock,
     currentReport,
-    TOTAL_TRIALS,
-    TOTAL_BLOCKS,
     accuracy,
     progress,
     sessionError,
+    taskConfig,
+    totalTrialsTarget,
   } from '$lib/stores/session.js';
   import CalibrationCanvas from '$lib/components/CalibrationCanvas.svelte';
   import SternbergCanvas from '$lib/components/SternbergCanvas.svelte';
@@ -27,6 +27,8 @@
   let block = $state(1);
   let error = $state(null);
   let report = $state(null);
+  let cfg = $state({ totalBlocks: 8, trialsPerBlock: 20 });
+  let totalTrialsTargetValue = $state(160);
 
   const encouragements = [
     '你做得很棒',
@@ -49,6 +51,8 @@
     unsubs.push(currentBlock.subscribe((v) => { block = v; }));
     unsubs.push(sessionError.subscribe((v) => { error = v; }));
     unsubs.push(currentReport.subscribe((v) => { report = v; }));
+    unsubs.push(taskConfig.subscribe((v) => { cfg = v; }));
+    unsubs.push(totalTrialsTarget.subscribe((v) => { totalTrialsTargetValue = v; }));
 
     encourageTimer = setInterval(() => {
       encourageIndex = (encourageIndex + 1) % encouragements.length;
@@ -95,7 +99,7 @@
 
       currentReport.set(reportResult);
       phase.set(PHASES.DONE);
-      goto('/screening/result');
+      goto('/screening/result?session_id=' + sessionId);
     } catch (e) {
       console.error('Failed to finish screening:', e);
       sessionError.set(String(e));
@@ -123,7 +127,12 @@
     />
 
   {:else if currentPhase === PHASES.RUNNING || currentPhase === PHASES.BREAK}
-    <SternbergCanvas onAllDone={handleAllTrialsDone} onCancel={handleSternbergCancel} />
+    <SternbergCanvas
+      onAllDone={handleAllTrialsDone}
+      onCancel={handleSternbergCancel}
+      totalBlocks={cfg.totalBlocks}
+      trialsPerBlock={cfg.trialsPerBlock}
+    />
 
   {:else if currentPhase === PHASES.GENERATING_REPORT}
     <div class="overlay-screen">
@@ -175,7 +184,7 @@
             </div>
             <div>
               <div class="stat-label">试次</div>
-              <div class="stat-value">{trialsCompleted}/{TOTAL_TRIALS}</div>
+              <div class="stat-value">{trialsCompleted}/{totalTrialsTargetValue}</div>
             </div>
           </div>
         </div>

@@ -47,7 +47,7 @@ impl CameraCapture {
     ///
     /// The latest frame is accessible via [`latest_frame()`].
     pub fn start() -> Result<Self> {
-        Self::start_with(0, 640, 480, 30)
+        Self::start_with(0, 640, 480, 40)
     }
 
     /// Open a specific camera with custom resolution and frame rate.
@@ -76,6 +76,8 @@ impl CameraCapture {
                         RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
                             width, height, FrameFormat::MJPEG, fps,
                         )))),
+                    ("highest frame rate", RequestedFormat::new::<RgbFormat>(
+                        RequestedFormatType::AbsoluteHighestFrameRate)),
                     ("YUYV exact", RequestedFormat::new::<RgbFormat>(
                         RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
                             width, height, FrameFormat::YUYV, fps,
@@ -84,18 +86,29 @@ impl CameraCapture {
                         RequestedFormatType::Closest(nokhwa::utils::CameraFormat::new_from(
                             width, height, FrameFormat::NV12, fps,
                         )))),
-                    ("highest frame rate", RequestedFormat::new::<RgbFormat>(
-                        RequestedFormatType::AbsoluteHighestFrameRate)),
                     ("highest resolution", RequestedFormat::new::<RgbFormat>(
                         RequestedFormatType::AbsoluteHighestResolution)),
                 ];
 
+                let min_acceptable_fps = 10;
                 let mut last_err: Option<String> = None;
                 let mut cam: Option<Camera> = None;
-                for (label, req) in attempts {
+                let num_attempts = attempts.len();
+                for (i, (label, req)) in attempts.into_iter().enumerate() {
+                    let is_last = i == num_attempts - 1;
                     match Camera::new(index.clone(), req) {
                         Ok(c) => {
-                            log::info!("Camera opened via fallback: {}", label);
+                            let actual_fps = c.camera_format().frame_rate();
+                            if !is_last && actual_fps < min_acceptable_fps {
+                                log::warn!(
+                                    "Camera format '{}' gave only {} fps (need >= {}), trying next...",
+                                    label, actual_fps, min_acceptable_fps
+                                );
+                                last_err = Some(format!("{}: only {} fps", label, actual_fps));
+                                // Camera is dropped here, releasing the device
+                                continue;
+                            }
+                            log::info!("Camera opened via: {} ({} fps reported)", label, actual_fps);
                             cam = Some(c);
                             break;
                         }
@@ -244,8 +257,19 @@ impl CameraCapture {
     pub fn stop(&mut self) {
         *self.stop_flag.lock() = true;
         if let Some(handle) = self.handle.take() {
-            if let Err(e) = handle.join() {
-                log::warn!("Camera thread panicked: {:?}", e);
+            // Wait up to 3 seconds for the capture thread to exit.
+            // If cam.frame() is blocking (slow driver), we don't want to hang forever.
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+            loop {
+                if handle.is_finished() {
+                    let _ = handle.join();
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    log::warn!("Camera thread did not exit within 3s, abandoning join");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(50));
             }
         }
     }

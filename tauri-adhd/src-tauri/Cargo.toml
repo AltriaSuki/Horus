@@ -1,5 +1,5 @@
 [package]
-name = "tauri-adhd"
+name = "horus"
 version = "0.1.0"
 description = "ADHD screening + training system — Rust backend"
 authors = ["ADHD Research Team"]

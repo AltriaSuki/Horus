@@ -3,11 +3,12 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { invoke } from '@tauri-apps/api/core';
-  import { currentReport, TOTAL_TRIALS } from '$lib/stores/session.js';
+  import { currentReport, totalTrialsTarget } from '$lib/stores/session.js';
 
   let report = $state(null);
   let loading = $state(true);
   let error = $state(null);
+  let totalTrialsValue = $state(160);
 
   /** Feature friendly-name mapping */
   const featureNames = {
@@ -45,6 +46,10 @@
   }
 
   onMount(async () => {
+    const unsubTrials = totalTrialsTarget.subscribe((v) => {
+      totalTrialsValue = v;
+    });
+
     // First try from store (just completed)
     const unsub = currentReport.subscribe((r) => {
       if (r) report = r;
@@ -67,6 +72,7 @@
       }
     }
     loading = false;
+    unsubTrials();
   });
 
   // Risk color
@@ -74,17 +80,20 @@
     if (!level) return 'var(--secondary)';
     const l = level.toLowerCase();
     if (l === 'low' || l === '低风险') return 'var(--secondary)';
-    if (l === 'medium' || l === '中风险') return 'var(--tertiary-dark)';
+    if (l === 'medium' || l === 'moderate' || l === '中风险' || l === '中等关注') return 'var(--tertiary-dark)';
     if (l === 'high' || l === '高风险') return 'var(--error)';
+    if (l === 'minimal' || l === '极低关注' || l === '极低') return 'var(--secondary)';
     return 'var(--text-muted)';
   }
 
   function riskLabel(level) {
     if (!level) return '未知';
     const l = level.toLowerCase();
-    if (l === 'low') return '低风险';
-    if (l === 'medium') return '中风险';
-    if (l === 'high') return '高风险';
+    // Show Chinese label before the English level (as requested)
+    if (l === 'high' || l === '高风险' || l === '高关注') return '高关注 HIGH';
+    if (l === 'moderate' || l === 'medium' || l === '中风险' || l === '中等关注') return '中等关注 MODERATE';
+    if (l === 'low' || l === '低风险' || l === '较低关注') return '较低关注 LOW';
+    if (l === 'minimal' || l === 'min' || l === '极低关注' || l === '极低') return '极低关注 MINIMAL';
     return level;
   }
 
@@ -190,7 +199,7 @@
       <div class="parent-card card">
         <h3 class="card-title parent-title">给家长的说明</h3>
         <div class="parent-content">
-          <p>本筛查基于 Sternberg 视觉工作记忆范式，通过分析孩子在 {TOTAL_TRIALS} 个试次中的反应时间、正确率、瞳孔变化和注视行为等 27 项指标，利用随机森林模型进行综合评估。</p>
+          <p>本筛查基于 Sternberg 视觉工作记忆范式，通过分析孩子在 {totalTrialsValue} 个试次中的反应时间、正确率、瞳孔变化和注视行为等 27 项指标，利用随机森林模型进行综合评估。</p>
           {#if report.prediction !== undefined}
             <div class="prediction-row">
               <span class="pred-label">模型预测:</span>

@@ -5,6 +5,7 @@
   let subjects = $state([]);
   let loading = $state(true);
   let error = $state(null);
+  let deletingId = $state('');
 
   const avatarColors = [
     '#FF8C42', '#4ECDC4', '#FFD166', '#E63946',
@@ -33,6 +34,26 @@
       console.error(e);
     } finally {
       loading = false;
+    }
+  }
+
+  async function deleteSubject(subject, e) {
+    e.stopPropagation();
+    if (deletingId) return;
+
+    const ok = confirm(`确认删除被试 ${subject.display_name}（${subject.id}）？\n将同时删除该被试的所有历史记录。`);
+    if (!ok) return;
+
+    deletingId = subject.id;
+    error = null;
+    try {
+      await invoke('delete_subject', { subjectId: subject.id });
+      await loadSubjects();
+    } catch (err) {
+      error = '删除被试失败: ' + err;
+      console.error(err);
+    } finally {
+      deletingId = '';
     }
   }
 </script>
@@ -82,6 +103,14 @@
     <div class="subject-grid">
       {#each subjects as subject, i}
         <div class="subject-card card animate-fade-in stagger-{(i % 5) + 1}">
+          <button
+            class="btn-delete-subject"
+            onclick={(e) => deleteSubject(subject, e)}
+            disabled={!!deletingId}
+            title="删除被试"
+          >
+            {deletingId === subject.id ? '删除中...' : '删除'}
+          </button>
           <div class="avatar" style="background: {getAvatarColor(i)}">
             <span class="avatar-letter">{getInitial(subject.display_name)}</span>
           </div>
@@ -169,6 +198,7 @@
     gap: var(--space-md);
   }
   .subject-card {
+    position: relative;
     display: flex;
     align-items: center;
     gap: var(--space-md);
@@ -221,5 +251,29 @@
   .sex-badge.female {
     background: #FFE0EA;
     color: #E63966;
+  }
+
+  .btn-delete-subject {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    border: none;
+    border-radius: 999px;
+    padding: 6px 12px;
+    font-size: var(--font-size-xs);
+    font-weight: 700;
+    color: #fff;
+    background: #d95d39;
+    cursor: pointer;
+    transition: transform 0.2s ease, opacity 0.2s ease;
+  }
+
+  .btn-delete-subject:hover:enabled {
+    transform: translateY(-1px);
+  }
+
+  .btn-delete-subject:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
   }
 </style>

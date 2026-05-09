@@ -19,6 +19,11 @@ pub fn resolve_game_exe() -> Option<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("."));
 
     let candidates = [
+        // Bundled as a Tauri resource (Windows/Linux)
+        exe_dir.join("resources").join("eyetrack package").join(exe_name),
+        exe_dir.join("eyetrack package").join(exe_name),
+        // Bundled as a Tauri resource (macOS app bundle)
+        exe_dir.join("..").join("Resources").join("eyetrack package").join(exe_name),
         // Bundled alongside the app binary (release)
         exe_dir.join("games").join("eyetrack").join(exe_name),
         exe_dir.join("..").join("Resources").join("games").join("eyetrack").join(exe_name),
@@ -35,7 +40,7 @@ pub fn resolve_game_exe() -> Option<PathBuf> {
             return Some(c.clone());
         }
     }
-    log::warn!("Game exe '{}' not found in any candidate path", exe_name);
+    log::warn!("Game exe '{}' not found in candidate paths: {:?}", exe_name, candidates);
     None
 }
 

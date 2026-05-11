@@ -18,9 +18,7 @@ pub struct Landmark {
 /// 478 face mesh landmarks (468 face + 10 iris).
 pub type Landmarks478 = Vec<Landmark>;
 
-// ═══════════════════════════════════════════════════════════════════
 // Iris feature extraction — from gaze_system.py compute_iris_features()
-// ═══════════════════════════════════════════════════════════════════
 
 /// Compute the 6D geometric iris + head-pose feature vector.
 ///
@@ -67,15 +65,11 @@ pub fn compute_iris_features(lm: &Landmarks478) -> Option<[f32; 6]> {
     let head_pitch = (nose[1] - face_cy) / face_h;
 
     Some([
-        r_ratio[0], r_ratio[1],
-        l_ratio[0], l_ratio[1],
-        head_yaw, head_pitch,
+        r_ratio[0], r_ratio[1], l_ratio[0], l_ratio[1], head_yaw, head_pitch,
     ])
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Pupil size estimation — from gaze_system.py estimate_pupil_size()
-// ═══════════════════════════════════════════════════════════════════
 
 /// Estimate relative pupil/iris size from MediaPipe iris landmarks.
 ///
@@ -107,9 +101,7 @@ pub fn estimate_pupil_size(lm: &Landmarks478) -> f32 {
     (r_ratio + l_ratio) / 2.0
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Eye Aspect Ratio — blink detection
-// ═══════════════════════════════════════════════════════════════════
 
 /// Left-eye and right-eye landmark index sets (same as Python).
 pub const LEFT_EAR_INDICES: [usize; 6] = [362, 385, 387, 263, 373, 380];
@@ -130,9 +122,7 @@ pub fn compute_ear(lm: &Landmarks478, indices: &[usize; 6]) -> f32 {
     let p5 = p(4);
     let p6 = p(5);
 
-    let dist = |a: [f32; 2], b: [f32; 2]| {
-        ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt()
-    };
+    let dist = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
 
     let vertical = dist(p2, p6) + dist(p3, p5);
     let horizontal = dist(p1, p4).max(1e-6);
@@ -140,9 +130,7 @@ pub fn compute_ear(lm: &Landmarks478, indices: &[usize; 6]) -> f32 {
     vertical / (2.0 * horizontal)
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Fixation-aware adaptive smoother
-// ═══════════════════════════════════════════════════════════════════
 
 /// Python ref: `gaze_system.py` line 114-138
 pub struct FixationSmoother {
@@ -158,9 +146,9 @@ impl FixationSmoother {
         Self {
             x: None,
             y: None,
-            fixation_vel_thresh: 25.0,  // px/frame
-            fixation_alpha: 0.4,        // match Python POS_SMOOTH_ALPHA
-            saccade_alpha: 0.7,         // fast reaction for saccades
+            fixation_vel_thresh: 25.0, // px/frame
+            fixation_alpha: 0.4,       // match Python POS_SMOOTH_ALPHA
+            saccade_alpha: 0.7,        // fast reaction for saccades
         }
     }
 
@@ -193,9 +181,7 @@ impl FixationSmoother {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Pupil signal smoother (5-frame moving average)
-// ═══════════════════════════════════════════════════════════════════
 
 /// Python ref: `gaze_system.py` `_smooth_pupil()` — plan §1.5.5
 pub struct PupilSmoother {
@@ -228,9 +214,7 @@ impl PupilSmoother {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Ridge regression (for 13-point calibration)
-// ═══════════════════════════════════════════════════════════════════
 
 /// Minimal Ridge regression: fit(X, Y) → predict(x).
 ///
@@ -330,7 +314,12 @@ impl RidgeRegressor {
         log::info!("  Scaler mean: {:?}", &self.mean);
         log::info!("  Scaler std:  {:?}", &self.std);
         for j in 0..d1 {
-            log::info!("  W[{}] = [{:.4}, {:.4}]", j, self.weights[j][0], self.weights[j][1]);
+            log::info!(
+                "  W[{}] = [{:.4}, {:.4}]",
+                j,
+                self.weights[j][0],
+                self.weights[j][1]
+            );
         }
     }
 
@@ -353,9 +342,7 @@ impl RidgeRegressor {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Feature buffer (exponential weighted mean)
-// ═══════════════════════════════════════════════════════════════════
 
 /// Python ref: `gaze_system.py` `_weighted_mean_feat()` line 619-625
 pub struct FeatureBuffer {
@@ -412,16 +399,14 @@ impl FeatureBuffer {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Gaze frame — the output of each capture iteration
-// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct GazeFrame {
-    pub t: f64,       // seconds since session start
-    pub x: f64,       // screen pixel X (NaN if invalid)
-    pub y: f64,       // screen pixel Y
-    pub pupil: f32,   // smoothed pupil proxy
+    pub t: f64,     // seconds since session start
+    pub x: f64,     // screen pixel X (NaN if invalid)
+    pub y: f64,     // screen pixel Y
+    pub pupil: f32, // smoothed pupil proxy
     pub valid: bool,
     pub fps: u32,
 }

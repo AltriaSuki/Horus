@@ -17,9 +17,7 @@ use nokhwa::utils::{CameraIndex, FrameFormat, RequestedFormat, RequestedFormatTy
 use nokhwa::Camera;
 use parking_lot::Mutex;
 
-// ═══════════════════════════════════════════════════════════════════
 // CameraFrame — a single captured image
-// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Clone)]
 pub struct CameraFrame {
@@ -31,9 +29,7 @@ pub struct CameraFrame {
     pub timestamp: f64,
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // CameraCapture — background-thread camera reader
-// ═══════════════════════════════════════════════════════════════════
 
 pub struct CameraCapture {
     latest: Arc<Mutex<Option<CameraFrame>>>,
@@ -187,10 +183,7 @@ impl CameraCapture {
         loop {
             // Check stop flag
             if *stop_flag.lock() {
-                log::info!(
-                    "Camera capture stopping (captured {} frames)",
-                    frame_count
-                );
+                log::info!("Camera capture stopping (captured {} frames)", frame_count);
                 break;
             }
 
@@ -218,7 +211,10 @@ impl CameraCapture {
                                 let fps = frame_count as f64 / ts;
                                 log::debug!(
                                     "Camera: {} frames, {:.1} fps, {}x{}",
-                                    frame_count, fps, w, h
+                                    frame_count,
+                                    fps,
+                                    w,
+                                    h
                                 );
                             }
                         }

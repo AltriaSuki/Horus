@@ -13,15 +13,15 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-# ── Tauri ──────────────────────────────────────────────────────────
+# Tauri
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 
-# ── Serialization ──────────────────────────────────────────────────
+# Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# ── ML inference (pure Rust, no C++ deps) ──────────────────────────
+# ML inference (pure Rust, no C++ deps)
 # tract supports ONNX + TFLite natively. We use it for:
 #   - affnet.onnx (AFFNet gaze estimation)
 #   - face_detection.onnx (BlazeFace)
@@ -30,23 +30,23 @@ serde_json = "1"
 tract-onnx = "0.21"
 tract-tflite = "0.21"
 
-# ── Camera ─────────────────────────────────────────────────────────
+# Camera
 nokhwa = { version = "0.10", features = ["input-native"] }
 
-# ── Image processing ──────────────────────────────────────────────
+# Image processing
 image = "0.25"
 
-# ── Linear algebra (Ridge regression, feature math) ────────────────
+# Linear algebra (Ridge regression, feature math)
 nalgebra = "0.33"
 ndarray = "0.16"
 
-# ── SQLite ─────────────────────────────────────────────────────────
+# SQLite
 rusqlite = { version = "0.32", features = ["bundled"] }
 
-# ── Async runtime ─────────────────────────────────────────────────
+# Async runtime
 tokio = { version = "1", features = ["rt", "sync", "time", "process"] }
 
-# ── Utilities ──────────────────────────────────────────────────────
+# Utilities
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 rand = "0.8"

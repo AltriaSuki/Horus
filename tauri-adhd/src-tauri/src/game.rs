@@ -11,7 +11,11 @@ use anyhow::{Context, Result};
 /// Locate the Unity game executable across dev and release environments.
 /// Returns the first path that exists, or None if the game is not bundled.
 pub fn resolve_game_exe() -> Option<PathBuf> {
-    let exe_name = if cfg!(target_os = "windows") { "eye.exe" } else { "eye.exe" };
+    let exe_name = if cfg!(target_os = "windows") {
+        "eye.exe"
+    } else {
+        "eye.exe"
+    };
 
     let exe_dir = std::env::current_exe()
         .ok()
@@ -20,13 +24,25 @@ pub fn resolve_game_exe() -> Option<PathBuf> {
 
     let candidates = [
         // Bundled as a Tauri resource (Windows/Linux)
-        exe_dir.join("resources").join("eyetrack package").join(exe_name),
+        exe_dir
+            .join("resources")
+            .join("eyetrack package")
+            .join(exe_name),
         exe_dir.join("eyetrack package").join(exe_name),
         // Bundled as a Tauri resource (macOS app bundle)
-        exe_dir.join("..").join("Resources").join("eyetrack package").join(exe_name),
+        exe_dir
+            .join("..")
+            .join("Resources")
+            .join("eyetrack package")
+            .join(exe_name),
         // Bundled alongside the app binary (release)
         exe_dir.join("games").join("eyetrack").join(exe_name),
-        exe_dir.join("..").join("Resources").join("games").join("eyetrack").join(exe_name),
+        exe_dir
+            .join("..")
+            .join("Resources")
+            .join("games")
+            .join("eyetrack")
+            .join(exe_name),
         // Relative to src-tauri (dev mode)
         PathBuf::from("../games/eyetrack").join(exe_name),
         PathBuf::from("../../eyetrack package").join(exe_name),
@@ -40,13 +56,15 @@ pub fn resolve_game_exe() -> Option<PathBuf> {
             return Some(c.clone());
         }
     }
-    log::warn!("Game exe '{}' not found in candidate paths: {:?}", exe_name, candidates);
+    log::warn!(
+        "Game exe '{}' not found in candidate paths: {:?}",
+        exe_name,
+        candidates
+    );
     None
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // GameManager
-// ═══════════════════════════════════════════════════════════════════
 
 pub struct GameManager {
     child: Option<Child>,
@@ -69,16 +87,14 @@ impl GameManager {
 
         log::info!("Game launched with PID {}", child.id());
 
-        Ok(Self {
-            child: Some(child),
-        })
+        Ok(Self { child: Some(child) })
     }
 
     /// Check if the game process is still running.
     pub fn is_running(&mut self) -> bool {
         match &mut self.child {
             Some(child) => match child.try_wait() {
-                Ok(None) => true,   // still running
+                Ok(None) => true, // still running
                 Ok(Some(_)) => {
                     log::info!("Game process exited");
                     false
@@ -139,5 +155,4 @@ mod tests {
         let result = GameManager::launch("/nonexistent/game.exe");
         assert!(result.is_err());
     }
-
 }

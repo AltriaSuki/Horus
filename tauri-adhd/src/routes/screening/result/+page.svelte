@@ -10,7 +10,7 @@
   let error = $state(null);
   let totalTrialsValue = $state(160);
 
-  /** Feature friendly-name mapping */
+  /** Labels shown in the report */
   const featureNames = {
     cv_rt: '反应时稳定性',
     accuracy: '正确率',
@@ -50,13 +50,13 @@
       totalTrialsValue = v;
     });
 
-    // First try from store (just completed)
+    // A just-finished run keeps its report in the session store.
     const unsub = currentReport.subscribe((r) => {
       if (r) report = r;
     });
     unsub();
 
-    // If we have a session_id query param, try to load from backend
+    // History pages open reports by session_id.
     if (!report) {
       const sessionId = $page.url.searchParams.get('session_id');
       if (sessionId) {
@@ -75,7 +75,7 @@
     unsubTrials();
   });
 
-  // Risk color
+  // Risk badge color
   function riskColor(level) {
     if (!level) return 'var(--secondary)';
     const l = level.toLowerCase();
@@ -89,7 +89,6 @@
   function riskLabel(level) {
     if (!level) return '未知';
     const l = level.toLowerCase();
-    // Show Chinese label before the English level (as requested)
     if (l === 'high' || l === '高风险' || l === '高关注') return '高关注 HIGH';
     if (l === 'moderate' || l === 'medium' || l === '中风险' || l === '中等关注') return '中等关注 MODERATE';
     if (l === 'low' || l === '低风险' || l === '较低关注') return '较低关注 LOW';
@@ -97,7 +96,6 @@
     return level;
   }
 
-  // Probability ring
   const ringSize = 180;
   const strokeWidth = 14;
   const radius = (ringSize - strokeWidth) / 2;
@@ -106,7 +104,6 @@
   let probability = $derived(report ? (report.adhd_probability || 0) : 0);
   let strokeDashoffset = $derived(circumference * (1 - probability));
 
-  // Feature importance (sorted)
   let featureImportance = $derived(() => {
     if (!report || !report.feature_importance) return [];
     return Object.entries(report.feature_importance)
@@ -142,7 +139,6 @@
     </div>
   {:else if report}
     <div class="result-content animate-fade-in">
-      <!-- Probability ring -->
       <div class="probability-section">
         <div class="probability-ring-wrapper">
           <svg width={ringSize} height={ringSize}>
@@ -179,7 +175,6 @@
         <p class="probability-label">ADHD 风险概率</p>
       </div>
 
-      <!-- Child congratulation card -->
       <div class="congrats-card card">
         <h3 class="card-title child-title">给孩子的话</h3>
         <div class="congrats-content">
@@ -189,30 +184,28 @@
             <path d="M17 24l4 4 10-10" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
           <div class="congrats-text">
-            <p class="congrats-main">你完成了所有的挑战!</p>
-            <p class="congrats-sub">你的专注力表现非常棒，继续保持!</p>
+            <p class="congrats-main">今天的任务完成了。</p>
+            <p class="congrats-sub">刚才每一关都需要认真看和记，辛苦了。</p>
           </div>
         </div>
       </div>
 
-      <!-- Parent explanation card -->
       <div class="parent-card card">
         <h3 class="card-title parent-title">给家长的说明</h3>
         <div class="parent-content">
-          <p>本筛查基于 Sternberg 视觉工作记忆范式，通过分析孩子在 {totalTrialsValue} 个试次中的反应时间、正确率、瞳孔变化和注视行为等 27 项指标，利用随机森林模型进行综合评估。</p>
+          <p>本次结果来自 Sternberg 视觉工作记忆任务。系统记录了 {totalTrialsValue} 个试次中的反应时间、正确率、瞳孔变化和注视行为，并将 27 项特征输入随机森林模型。</p>
           {#if report.prediction !== undefined}
             <div class="prediction-row">
-              <span class="pred-label">模型预测:</span>
+              <span class="pred-label">模型输出:</span>
               <span class="pred-value" style="color: {riskColor(report.risk_level)}">
-                {report.prediction === 1 ? '存在注意力风险' : '注意力表现正常'}
+                {report.prediction === 1 ? '建议进一步关注' : '本次未提示明显风险'}
               </span>
             </div>
           {/if}
-          <p class="disclaimer">注意: 本结果仅供参考，不构成医学诊断。如有疑虑，请咨询专业医疗机构。</p>
+          <p class="disclaimer">注意: 本结果只反映这一次任务表现，不等同于医学诊断。如持续担心注意力或行为问题，请到专业医疗机构评估。</p>
         </div>
       </div>
 
-      <!-- Feature importance -->
       {#if featureImportance().length > 0}
         <div class="features-section">
           <h3 class="section-title">关键指标分析</h3>
@@ -280,7 +273,7 @@
     gap: var(--space-xl);
   }
 
-  /* Probability ring */
+  /* Probability */
   .probability-section {
     display: flex;
     flex-direction: column;
@@ -387,7 +380,7 @@
     border-left: 3px solid var(--text-muted);
   }
 
-  /* Feature importance */
+  /* Features */
   .features-section {
     background: var(--surface);
     border-radius: var(--radius-md);

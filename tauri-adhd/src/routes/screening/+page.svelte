@@ -17,7 +17,7 @@
   let loadingMsg = $state('');
   let error = $state(null);
   let loadingSubjects = $state(true);
-  // 'idle' | 'permission' — show camera permission explanation modal
+  // 'idle' | 'permission'
   let stage = $state('idle');
   let testBlocks = $state(8);
   let testTrialsPerBlock = $state(20);
@@ -51,8 +51,7 @@
     error = null;
     loadingMsg = '正在启动摄像头...';
     try {
-      // 直接启动早筛 — 首次调用会触发 macOS 权限弹框。避免单独的预探测以
-      // 防止"打开→关闭→再打开"期间 AVFoundation 未及时释放导致第二次失败。
+      // 首次调用会触发 macOS 摄像头权限弹框；避免预探测造成设备二次打开失败。
       resetSession();
       const session = await invoke('start_screening', {
         subjectId: selectedSubjectId,
@@ -74,7 +73,7 @@
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
       error = msg;
       console.error(e);
-      // 留在 permission 阶段让用户看到错误并选择重试/取消
+      // 保留弹窗，方便用户重试或取消。
     } finally {
       loading = false;
       loadingMsg = '';
@@ -85,42 +84,34 @@
 </script>
 
 <div class="page-content">
-  <!-- Hero card -->
   <div class="hero-card animate-fade-in">
     <div class="hero-bg animate-float">
       <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
-        <!-- Glowing Background -->
         <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
-        <!-- Rocket Body -->
         <path d="M40 15C40 15 25 35 25 55C25 60 30 65 40 65C50 65 55 60 55 55C55 35 40 15 40 15Z" fill="white"/>
-        <!-- Window -->
         <circle cx="40" cy="40" r="6" fill="var(--primary-dark)"/>
-        <!-- Fins -->
         <path d="M25 55L15 65H30L25 55Z" fill="white"/>
         <path d="M55 55L65 65H50L55 55Z" fill="white"/>
-        <!-- Flame -->
         <path d="M35 65 Q40 75 45 65 Z" fill="#FFE699"/>
       </svg>
     </div>
     <h1 class="hero-title">视觉记忆挑战</h1>
-    <p class="hero-subtitle">Sternberg 工作记忆范式 -- 注意力早期筛查</p>
+    <p class="hero-subtitle">Sternberg 工作记忆任务，用于记录注意力相关表现</p>
   </div>
 
-  <!-- Child-friendly guidance -->
   <div class="guide-card animate-fade-in stagger-1">
     <div class="guide-badge">指导语</div>
     <div class="guide-content">
       <h2 class="guide-title">小朋友先听我说</h2>
       <p class="guide-text">
-        先跟着屏幕上的小提示做。<br />
-        你要记住圆点有没有出现过。<br />
-        见过的按 1，没见过的按 2。按主键盘或数字小键盘的 1/2 都可以。<br />
-        坐好一点，眼睛看着屏幕，慢慢来就行。
+        先看屏幕上的圆点。<br />
+        后面出现探测点时，判断它刚才有没有出现过。<br />
+        出现过按 1，没出现过按 2；主键盘和数字小键盘都可以。<br />
+        尽量坐稳，看着屏幕，不用抢答。
       </p>
     </div>
   </div>
 
-  <!-- Steps guide -->
   <div class="steps-section">
     <h2 class="section-title animate-fade-in">闯关流程</h2>
     <div class="steps">
@@ -128,27 +119,26 @@
         <div class="step-badge">1</div>
         <div class="step-content">
           <span class="step-title">校准眼动</span>
-          <span class="step-desc">跟随屏幕上的圆点点击，让系统熟悉你的眼睛</span>
+          <span class="step-desc">按提示看圆点并点击，建立本次测试的眼动映射</span>
         </div>
       </div>
       <div class="step animate-fade-in stagger-2">
         <div class="step-badge">2</div>
         <div class="step-content">
           <span class="step-title">视觉记忆闯关</span>
-          <span class="step-desc">记住出现的小圆点，判断探测点是否出现过 (共8关)</span>
+          <span class="step-desc">记住圆点位置，再判断探测点是否出现过（默认 8 关）</span>
         </div>
       </div>
       <div class="step animate-fade-in stagger-3">
         <div class="step-badge">3</div>
         <div class="step-content">
           <span class="step-title">查看报告</span>
-          <span class="step-desc">系统自动分析注意力表现，生成专业报告</span>
+          <span class="step-desc">查看反应、瞳孔和注视指标形成的本次结果</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Subject picker -->
   <div class="picker-section animate-fade-in stagger-4">
     <h2 class="section-title">选择被试</h2>
     {#if loadingSubjects}
@@ -175,7 +165,7 @@
 
   <div class="test-config-section animate-fade-in stagger-4">
     <h2 class="section-title">测试配置</h2>
-    <p class="config-hint">调小后可快速验证流程与报告保存（正式使用建议 8 x 20）</p>
+    <p class="config-hint">调小后便于走通流程；正式采集建议保持 8 x 20</p>
     <div class="config-grid">
       <label class="config-item">
         <span>Block 数</span>
@@ -202,7 +192,6 @@
     </div>
   </div>
 
-  <!-- Start button -->
   <div class="start-section">
     <button class="btn-primary start-btn" onclick={requestStart} disabled={!canStart}>
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -224,7 +213,7 @@
       </div>
       <h2 id="perm-title" class="modal-title">需要摄像头权限</h2>
       <p class="modal-body">
-        本应用需要访问摄像头来跟踪你的眼睛运动，用于注意力评估。
+        本应用需要访问摄像头来估计眼睛位置，用于记录任务中的注视变化。
         <br /><br />
         摄像头画面<strong>只在本机处理</strong>，不会上传到任何服务器，也不会被保存。
       </p>
@@ -254,7 +243,7 @@
 {/if}
 
 <style>
-  /* ── Hero card ─────────────────────────────────────────────── */
+  /* Hero */
   .hero-card {
     background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
     border-radius: var(--radius-xl);
@@ -322,7 +311,7 @@
     opacity: 0.85;
   }
 
-  /* ── Steps ─────────────────────────────────────────────────── */
+  /* Steps */
   .steps-section {
     margin-bottom: var(--space-xl);
   }
@@ -375,7 +364,7 @@
     color: var(--text-muted);
   }
 
-  /* ── Picker ────────────────────────────────────────────────── */
+  /* Picker */
   .picker-section {
     margin-bottom: var(--space-xl);
   }
@@ -388,7 +377,7 @@
     color: var(--text-muted);
   }
 
-  /* ── Start ─────────────────────────────────────────────────── */
+  /* Start */
   .start-section {
     display: flex;
     justify-content: center;
@@ -440,7 +429,7 @@
     margin-bottom: var(--space-md);
   }
 
-  /* ── Permission modal ──────────────────────────────────────── */
+  /* Permission modal */
   .modal-backdrop {
     position: fixed;
     inset: 0;

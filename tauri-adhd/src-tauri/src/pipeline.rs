@@ -20,15 +20,11 @@ const BLINK_EAR_THRESHOLD: f32 = 0.12;
 /// Minimum number of buffered features before ridge prediction kicks in.
 const MIN_FEATURES_FOR_PREDICTION: usize = 1;
 
-// ═══════════════════════════════════════════════════════════════════
 // Type alias for the AFFNet model plan
-// ═══════════════════════════════════════════════════════════════════
 
 type OnnxPlan = TypedRunnableModel<TypedModel>;
 
-// ═══════════════════════════════════════════════════════════════════
 // AFFNet helpers — eye & face rectangles
-// ═══════════════════════════════════════════════════════════════════
 
 /// Eye landmark indices for cropping the eye region (from Python).
 const LEFT_EYE_INDICES: &[usize] = &[
@@ -143,8 +139,7 @@ fn crop_and_preprocess(
     out_h: usize,
     out_w: usize,
 ) -> Option<tract_ndarray::Array4<f32>> {
-    let img =
-        image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(img_w, img_h, rgb.to_vec())?;
+    let img = image::ImageBuffer::<image::Rgb<u8>, _>::from_raw(img_w, img_h, rgb.to_vec())?;
 
     let (x0, y0, x1, y1) = xyxy;
     let cw = x1.saturating_sub(x0).max(1);
@@ -174,9 +169,7 @@ fn crop_and_preprocess(
     Some(tensor)
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // GazePipeline
-// ═══════════════════════════════════════════════════════════════════
 
 pub struct GazePipeline {
     face_mesh: FaceMeshDetector,
@@ -198,8 +191,7 @@ impl GazePipeline {
     /// `screen_w` and `screen_h` define the screen resolution used for
     /// mapping normalised gaze coordinates to pixel coordinates.
     pub fn new(models_dir: &Path, screen_w: u32, screen_h: u32) -> Result<Self> {
-        let face_mesh =
-            FaceMeshDetector::load(models_dir).context("Loading face mesh detector")?;
+        let face_mesh = FaceMeshDetector::load(models_dir).context("Loading face mesh detector")?;
 
         // Load AFFNet (may have external data file affnet.onnx.data)
         let affnet_path = models_dir.join("affnet.onnx");
@@ -210,12 +202,18 @@ impl GazePipeline {
                     Some(plan)
                 }
                 Err(e) => {
-                    log::warn!("Failed to load AFFNet: {}. Gaze prediction will use iris features only.", e);
+                    log::warn!(
+                        "Failed to load AFFNet: {}. Gaze prediction will use iris features only.",
+                        e
+                    );
                     None
                 }
             }
         } else {
-            log::warn!("AFFNet model not found at {:?}. Using iris features only.", affnet_path);
+            log::warn!(
+                "AFFNet model not found at {:?}. Using iris features only.",
+                affnet_path
+            );
             None
         };
 
@@ -419,9 +417,8 @@ impl GazePipeline {
 
         // Rect feature: 1x12
         let rect_feat = rect_feature(l_xyxy, r_xyxy, f_xyxy, fw, fh);
-        let rect_tensor =
-            tract_ndarray::Array2::<f32>::from_shape_vec([1, 12], rect_feat.to_vec())
-                .unwrap_or_else(|_| tract_ndarray::Array2::zeros([1, 12]));
+        let rect_tensor = tract_ndarray::Array2::<f32>::from_shape_vec([1, 12], rect_feat.to_vec())
+            .unwrap_or_else(|_| tract_ndarray::Array2::zeros([1, 12]));
 
         // Run AFFNet
         let result = affnet.run(tvec![
@@ -500,7 +497,13 @@ mod tests {
 
     #[test]
     fn test_rect_feature() {
-        let rf = rect_feature((10, 20, 50, 60), (70, 20, 110, 60), (0, 0, 200, 200), 200.0, 200.0);
+        let rf = rect_feature(
+            (10, 20, 50, 60),
+            (70, 20, 110, 60),
+            (0, 0, 200, 200),
+            200.0,
+            200.0,
+        );
         assert_eq!(rf.len(), 12);
         // Left eye x: 10/200 = 0.05
         assert!((rf[0] - 0.05).abs() < 0.001);

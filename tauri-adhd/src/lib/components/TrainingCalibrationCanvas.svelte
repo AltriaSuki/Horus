@@ -1,12 +1,5 @@
 <script>
-  /**
-   * TrainingCalibrationCanvas — 15-point calibration for the Python eye tracker.
-   *
-   * Visually identical to CalibrationCanvas (screening), but drives calibration
-   * via the headless Python eye_tracker_server.py subprocess.
-   *
-   * Flow: click point → collect samples (Python) → next point → train model → done.
-   */
+  // Calibration screen for the Python eye tracker used by the training game.
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
@@ -17,9 +10,9 @@
   let ctx = $state(null);
   let animFrameId = null;
 
-  let mode = $state('calibrating');     // 'calibrating' | 'training' | 'done'
+  let mode = $state('calibrating');
   let currentPointIndex = $state(0);
-  let collecting = $state(false);       // true while Python is collecting samples
+  let collecting = $state(false);
   let trainAccuracy = $state(null);
   let showResult = $state(false);
   let errorBanner = $state(null);
@@ -33,7 +26,7 @@
   let unlistenTrainFailed = null;
   let unlistenStatus = null;
 
-  // 15 calibration points — matching Python's CALI_GRID exactly
+  // Matches Python's 15-point calibration grid.
   const calibrationPoints = [
     { x: 0.50, y: 0.50, label: 'center' },
     { x: 0.42, y: 0.45, label: 'center' },
@@ -67,11 +60,9 @@
   let collectStartTime = $state(0);
   let collectSamples = $state(0);
   let collectTargetSamples = $state(20);
-  let collectStage = $state('idle'); // idle | settling | collecting
-  // Sample count display during collection
+  let collectStage = $state('idle');
   let lastSampleCount = $state(0);
 
-  // Keep training calibration timing consistent with screening calibration.
   const SETTLE_MS = 300;
   const COLLECT_MS = 3000;
   const MIN_SAMPLES = 2;
@@ -83,7 +74,6 @@
     resizeCanvas();
     startTime = performance.now();
 
-    // Listen for Python events
     unlistenPointDone = await listen('eye_tracker_point_done', (event) => {
       if (isDestroyed) return;
       const { index, samples, target } = event.payload;
@@ -101,7 +91,6 @@
       currentPointIndex++;
 
       if (currentPointIndex >= calibrationPoints.length) {
-        // All points collected — train model
         mode = 'training';
         invoke('eye_tracker_train').catch((e) => {
           if (isDestroyed) return;
@@ -126,7 +115,6 @@
       mode = 'done';
       showResult = true;
 
-      // Start TCP server
       invoke('eye_tracker_start_server').catch((e) => {
         console.error('Failed to start server:', e);
       });
@@ -200,7 +188,6 @@
     const dist = Math.hypot(clickX - targetX, clickY - targetY);
     if (dist > CLICK_RADIUS) return;
 
-    // Start collecting samples for this point
     collecting = true;
     collectStage = 'settling';
     collectStartTime = performance.now();
@@ -242,11 +229,9 @@
     const w = cssWidth;
     const h = cssHeight;
 
-    // Warm dark background (identical to CalibrationCanvas)
     ctx.fillStyle = '#37302B';
     ctx.fillRect(0, 0, w, h);
 
-    // ── Banner ─────────────────────────────────────────────────
     const bannerH = 48;
     let bannerText = '';
     if (mode === 'calibrating' && !collecting) {
@@ -280,7 +265,6 @@
       ctx.fillText(bannerText, w / 2, bannerY + bannerH / 2);
     }
 
-    // ── Content ─────────────────────────────────────────────────
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
@@ -297,7 +281,6 @@
       ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
       ctx.fillText('即将开始训练...', w / 2, h / 2 + 50);
     } else if (mode === 'training') {
-      // Show spinner text
       const dots = '.'.repeat(Math.floor(elapsed) % 4);
       ctx.fillStyle = '#FFF8F0';
       ctx.font = '700 28px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -306,7 +289,6 @@
       drawTarget(currentPoint.x * w, currentPoint.y * h, elapsed);
     }
 
-    // ── Error banner (top center) ──────────────────────────────
     if (errorBanner) {
       const msg = errorBanner;
       ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -327,7 +309,6 @@
       ctx.fillText(msg, w / 2, ebY + ebH / 2);
     }
 
-    // ── Progress bar ────────────────────────────────────────────
     if (mode === 'calibrating') {
       const progress = currentPointIndex / totalPoints;
       const barH = 6;
@@ -346,7 +327,6 @@
     const outerR = 30 * pulse;
     const innerR = 10;
 
-    // Glow
     const grad = ctx.createRadialGradient(x, y, innerR, x, y, outerR + 16);
     grad.addColorStop(0, 'rgba(78,205,196,0.45)');
     grad.addColorStop(0.6, 'rgba(78,205,196,0.12)');
@@ -356,14 +336,12 @@
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Outer ring
     ctx.beginPath();
     ctx.arc(x, y, outerR, 0, Math.PI * 2);
     ctx.strokeStyle = '#4ECDC4';
     ctx.lineWidth = 3;
     ctx.stroke();
 
-    // Progress ring — same style as screening calibration
     if (collecting) {
       const elapsed = performance.now() - collectStartTime;
       const totalDuration = SETTLE_MS + COLLECT_MS;
@@ -402,19 +380,16 @@
       }
     }
 
-    // Inner disc
     ctx.beginPath();
     ctx.arc(x, y, innerR, 0, Math.PI * 2);
     ctx.fillStyle = '#4ECDC4';
     ctx.fill();
 
-    // Center white dot
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fillStyle = '#FFFFFF';
     ctx.fill();
 
-    // Number label in a yellow pill below the target
     const label = `${currentPointIndex + 1}`;
     ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(label).width;

@@ -1,14 +1,5 @@
 <script>
-  /**
-   * CalibrationCanvas — 13-point calibration + 5-point validation.
-   *
-   * Fixes vs initial version:
-   * - Points match Python exactly: (0.08, 0.08) → (0.92, 0.92)
-   * - devicePixelRatio handling for Retina displays
-   * - Click proximity check (must click within 40px of target)
-   * - ESC key handler + visible exit button
-   * - Warm kid-friendly styling with orange banner
-   */
+  // 13-point calibration followed by a short validation pass.
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
@@ -27,35 +18,29 @@
   let showResult = $state(false);
   let errorBanner = $state(null);
   let errorBannerTimer = null;
-  // Flag set on unmount / ESC. All async continuations check this before
-  // touching state, so we can't race into `mode = 'validating'` or fire
-  // `onDone` after the parent has already navigated away.
+  // Guards async work after ESC or route changes.
   let isDestroyed = false;
-  // Pending timers scheduled by validation flow — cleared on destroy / retry.
   let pendingTimers = [];
   let doneTimer = null;
   let postCalibTimer = null;
 
-  // Live gaze prediction (x, y in screen pixels) — updated by gaze_frame events
   let lastGaze = { x: null, y: null, ts: 0 };
 
-  // Per-point multi-sample collection (like training calibration)
-  let collecting = $state(false);       // true while auto-collecting samples for current point
-  let collectStartTime = $state(0);     // performance.now() when collection started
-  let collectSamples = $state(0);       // successful samples collected so far
-  let collectIntervalId = null;         // setInterval handle
+  let collecting = $state(false);
+  let collectStartTime = $state(0);
+  let collectSamples = $state(0);
+  let collectIntervalId = null;
 
-  const SETTLE_MS = 300;        // settling time before collection starts
-  const COLLECT_MS = 3000;      // collection window (3s → ~3-4 samples at 1fps)
+  const SETTLE_MS = 300;
+  const COLLECT_MS = 3000;
   const SAMPLE_INTERVAL = 200;  // attempt a sample every 200ms
   const MIN_SAMPLES = 2;        // minimum successful samples to accept the point
 
-  // Validation error collection
   let validationErrors = [];
   let validationBuffer = [];
   let validationCollecting = false;
 
-  // 13 calibration points — EXACTLY matching Python's CALI_GRID
+  // Same 13-point grid used by the backend/Python calibration.
   const calibrationPoints = [
     { x: 0.08, y: 0.08 }, { x: 0.50, y: 0.08 }, { x: 0.92, y: 0.08 },
     { x: 0.08, y: 0.32 }, { x: 0.50, y: 0.32 }, { x: 0.92, y: 0.32 },
@@ -64,7 +49,6 @@
     { x: 0.50, y: 0.92 },
   ];
 
-  // 5 validation points — cardinal + center
   const validationPoints = [
     { x: 0.50, y: 0.10 },  // top
     { x: 0.50, y: 0.90 },  // bottom
@@ -73,7 +57,7 @@
     { x: 0.50, y: 0.50 },  // center
   ];
 
-  const CLICK_RADIUS = 40; // px — must click within this distance of target
+  const CLICK_RADIUS = 40;
 
   let activePoints = $derived(mode === 'calibrating' ? calibrationPoints : validationPoints);
   let totalPoints = $derived(activePoints.length);
@@ -130,20 +114,14 @@
     dpr = window.devicePixelRatio || 1;
     cssWidth = window.innerWidth;
     cssHeight = window.innerHeight;
-    // Set the backing store to physical pixels for crisp rendering
     canvas.width = cssWidth * dpr;
     canvas.height = cssHeight * dpr;
-    // Scale the context so all drawing uses CSS pixel coordinates
     ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   function handleKey(e) {
     if (e.key === 'Escape') {
-      // Mark destroyed *before* calling back to kill any in-flight
-      // finish_calibration / finalizeValidation continuations that would
-      // otherwise flip mode='validating' or fire onDone after the parent
-      // navigated away.
       isDestroyed = true;
       for (const t of pendingTimers) clearTimeout(t);
       pendingTimers = [];
@@ -158,20 +136,16 @@
     if (mode !== 'calibrating' || !currentPoint || showResult || collecting) return;
     if (isDestroyed) return;
 
-    // Get click position in CSS pixels
     const rect = canvas.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
 
-    // Target position in CSS pixels
     const targetX = currentPoint.x * cssWidth;
     const targetY = currentPoint.y * cssHeight;
 
-    // Check proximity — must click within CLICK_RADIUS of target
     const dist = Math.hypot(clickX - targetX, clickY - targetY);
-    if (dist > CLICK_RADIUS) return; // ignore clicks too far away
+    if (dist > CLICK_RADIUS) return;
 
-    // --- Multi-sample collection: click starts auto-collecting for this point ---
     collecting = true;
     collectStartTime = performance.now();
     collectSamples = 0;
@@ -198,7 +172,6 @@
         return;
       }
 
-      // Try to collect a sample
       try {
         await invoke('submit_calibration_sample', {
           screenX: targetX,
@@ -206,7 +179,7 @@
         });
         collectSamples++;
       } catch (_err) {
-        // face not detected for this sample — skip silently, keep trying
+        // No face sample for this frame; keep collecting.
       }
     }, SAMPLE_INTERVAL);
   }
@@ -229,7 +202,6 @@
       showErrorBanner(msg);
     }
     if (isDestroyed) return;
-    // Briefly show "校准完成，进入验证" then run validation to get real error.
     showResult = true;
     postCalibTimer = setTimeout(() => {
       postCalibTimer = null;
@@ -305,11 +277,7 @@
     mode = 'done';
     showResult = true;
 
-    // Bug B: do NOT auto-advance when calibration actually failed.
-    // Previously the UI pretended the result was good ("校准结果已获取")
-    // and we fired onDone regardless — the parent then forced the user
-    // into Sternberg with a garbage eye-tracking model. Now: on failure
-    // we stop here and let the user click "重新校准" or "退出".
+    // Failed validation stays on this screen; success advances after a short pause.
     if (meanError !== null && meanError >= 0) {
       doneTimer = setTimeout(() => {
         doneTimer = null;
@@ -319,13 +287,7 @@
     }
   }
 
-  /** Retry calibration after a failed validation.
-   * Backend does not expose reset_calibration yet, so recording another
-   * 13 points on top of the existing calibrator state would compound the
-   * problem. Safest option: bail out via onCancel so the parent tears
-   * down the session and routes the user back to the start screen — they
-   * click "开始闯关" again and get a clean start_screening call (which
-   * resets SESSION on the backend, per commands.rs:71-78). */
+  // Retry through the parent route so the backend starts from a clean session.
   function retryCalibration() {
     if (isDestroyed) return;
     isDestroyed = true;
@@ -346,13 +308,9 @@
     const w = cssWidth;
     const h = cssHeight;
 
-    // Warm dark background
     ctx.fillStyle = '#37302B';
     ctx.fillRect(0, 0, w, h);
 
-    // ── Banner — positioned OPPOSITE to the current target ─────
-    // If target is in top half → banner at bottom; if bottom → at top.
-    // This prevents the text from overlapping the calibration dot.
     const bannerH = 48;
     const bannerText = mode === 'calibrating'
       ? (collecting
@@ -365,7 +323,6 @@
     if (bannerText && !showResult && currentPoint) {
       const bannerColor = mode === 'calibrating' ? '#FF8C42' : '#4ECDC4';
       const bannerWidth = Math.min(500, w - 60);
-      // Fixed vertical position between rows to prevent overlapping and jumping (y = 80%)
       const bannerY = h * 0.80 - bannerH / 2;
 
       ctx.fillStyle = 'rgba(0,0,0,0.25)';
@@ -382,16 +339,12 @@
       ctx.fillText(bannerText, w / 2, bannerY + bannerH / 2);
     }
 
-    // ── ESC hint ─────────── (Removed, as it is merged into the Exit button below)
-
-    // ── Content ─────────────────────────────────────────────────
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
 
     if (mode === 'done' && showResult) {
       const failed = !(meanError != null && meanError >= 0);
       if (failed) {
-        // Honest failure screen — do NOT pretend it worked.
         ctx.fillStyle = '#E94F4F';
         ctx.font = '800 34px "PingFang SC", "Microsoft YaHei", sans-serif';
         ctx.fillText('校准失败，请重做', w / 2, h / 2 - 50);
@@ -423,7 +376,6 @@
       drawTarget(currentPoint.x * w, currentPoint.y * h, elapsed);
     }
 
-    // ── Error banner (top center, red/orange) ──────────────────
     if (errorBanner) {
       const msg = errorBanner;
       ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -444,7 +396,6 @@
       ctx.fillText(msg, w / 2, ebY + ebH / 2);
     }
 
-    // ── Progress bar ────────────────────────────────────────────
     if (mode === 'calibrating' || mode === 'validating') {
       const progress = currentPointIndex / totalPoints;
       const barH = 6;
@@ -463,7 +414,6 @@
     const outerR = 30 * pulse;
     const innerR = 10;
 
-    // Glow
     const grad = ctx.createRadialGradient(x, y, innerR, x, y, outerR + 16);
     grad.addColorStop(0, 'rgba(78,205,196,0.45)');
     grad.addColorStop(0.6, 'rgba(78,205,196,0.12)');
@@ -473,7 +423,6 @@
     ctx.fillStyle = grad;
     ctx.fill();
 
-    // Outer ring
     ctx.beginPath();
     ctx.arc(x, y, outerR, 0, Math.PI * 2);
     ctx.strokeStyle = '#4ECDC4';
@@ -489,14 +438,12 @@
       const endAngle = startAngle + progress * Math.PI * 2;
       const progressR = outerR + 8;
 
-      // Background track
       ctx.beginPath();
       ctx.arc(x, y, progressR, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(255,255,255,0.15)';
       ctx.lineWidth = 5;
       ctx.stroke();
 
-      // Progress arc
       ctx.beginPath();
       ctx.arc(x, y, progressR, startAngle, endAngle);
       ctx.strokeStyle = elapsed < SETTLE_MS ? '#FFD166' : '#4ECDC4';
@@ -505,7 +452,6 @@
       ctx.stroke();
       ctx.lineCap = 'butt';
 
-      // Sample count badge
       if (collectSamples > 0) {
         const badgeR = 12;
         const badgeX = x + outerR + 14;
@@ -522,19 +468,16 @@
       }
     }
 
-    // Inner disc
     ctx.beginPath();
     ctx.arc(x, y, innerR, 0, Math.PI * 2);
     ctx.fillStyle = '#4ECDC4';
     ctx.fill();
 
-    // Center white dot
     ctx.beginPath();
     ctx.arc(x, y, 3, 0, Math.PI * 2);
     ctx.fillStyle = '#FFFFFF';
     ctx.fill();
 
-    // Number label in a yellow pill below the target
     const label = `${currentPointIndex + 1}`;
     ctx.font = '700 16px "PingFang SC", "Microsoft YaHei", sans-serif';
     const tw = ctx.measureText(label).width;
@@ -551,7 +494,6 @@
     ctx.fillText(label, x, pillY + pillH / 2);
   }
 
-  /** Helper: draw a rounded rectangle path */
   function roundRect(ctx, x, y, w, h, r) {
     ctx.beginPath();
     ctx.moveTo(x + r, y);
@@ -581,7 +523,6 @@
   </button>
 {/if}
 
-<!-- Exit button — perfectly safe at the bottom right corner (no points map to this position) -->
 <button
   class="exit-btn"
   onclick={() => {

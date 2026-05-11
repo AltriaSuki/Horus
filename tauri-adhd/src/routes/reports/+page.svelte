@@ -52,7 +52,7 @@
 
   async function viewReport(session) {
     const sessionId = session.session_id || session.id;
-    // Try to load the report
+    // Load the report for the selected session.
     try {
       const report = await invoke('get_report', { sessionId });
       if (report) {

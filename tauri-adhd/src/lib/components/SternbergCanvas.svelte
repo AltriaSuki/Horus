@@ -1,16 +1,5 @@
 <script>
-  /**
-   * SternbergCanvas — Full Sternberg working-memory paradigm.
-   *
-   * Trial structure (Wainstein 2017 / Rojas-Libano 2019):
-   *   Fixation (500ms) -> Encoding 3x(750ms dots + 500ms gap) -> Maintenance (500ms)
-   *   -> Distractor (500ms) -> Probe (1500ms) -> Feedback (500ms)
-   *
-   * 160 trials: 8 blocks x 20 trials. Break screen between blocks.
-   *
-   * Timing: requestAnimationFrame + performance.now() wall-clock.
-   * Gaze: listens to 'gaze_frame' events, appends to trial series.
-   */
+  // Sternberg task canvas; gaze samples come from Rust `gaze_frame` events.
   import { invoke } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { onMount, onDestroy } from 'svelte';
@@ -25,14 +14,8 @@
 
   const totalTrials = Math.max(1, totalBlocks * trialsPerBlock);
 
-  // ─── ESC confirm-exit overlay (Bug C) ────────────────────────────
-  // When true, the render loop paints a modal over the current phase
-  // asking the user to confirm exit. Task-phase timing continues to
-  // advance underneath (we deliberately don't pause the paradigm —
-  // the user is either coming back in <1s or leaving anyway).
   let showExitConfirm = $state(false);
-  // Hit-boxes for the two confirm buttons, recomputed on each draw
-  // so Canvas click dispatch matches what the user sees after resize.
+  // Recomputed on draw so clicks match the resized canvas.
   let exitConfirmButtons = { continue: null, exit: null };
 
   let canvas = $state(null);
@@ -40,10 +23,7 @@
   let animFrameId = null;
   let unlistenGaze = null;
 
-  // ═══════════════════════════════════════════════════════════════
-  // Constants
-  // ═══════════════════════════════════════════════════════════════
-  const NUM_ENCODING_ARRAYS = 3;     // three memory arrays per trial (Wainstein 2017)
+  const NUM_ENCODING_ARRAYS = 3;
   const ENCODING_DOT_MS = 750;
   const ENCODING_GAP_MS = 500;
   const FIXATION_MS = 500;
@@ -52,20 +32,14 @@
   const PROBE_MS = 1500;
   const FEEDBACK_MS = 1500;
 
-  // Distractor types: 3=neutral_image, 4=emotional_image, 5=gray_shape, 6=blank
   const DISTRACTOR_TYPES = [3, 4, 5, 6];
 
-  // Grid layout for dot positions (4x4)
   const GRID_COLS = 4;
   const GRID_ROWS = 4;
 
-  // ═══════════════════════════════════════════════════════════════
-  // State
-  // ═══════════════════════════════════════════════════════════════
   let screenW = 0;
   let screenH = 0;
 
-  // Task state
   let taskPhase = 'intro';  // intro | fixation | encoding | encoding_gap | maintenance | distractor | post_distractor_fixation | probe | feedback | break | complete
   let phaseStartTime = 0;
   let planCursor = 0;       // 0-based index into trialPlan (next trial to run)
@@ -73,57 +47,46 @@
   let blockNum = 1;         // 1-based block number
   let trialInBlock = 0;     // 1-based trial within block
 
-  // Current trial data
-  let encodingPositions = [];   // [{col, row}, ...] — full memory set (load*3 positions)
-  let currentEncodingIndex = 0; // which array we're showing (0..2)
-  let currentLoad = 1;          // dots per array for current trial
-  let probePosition = null;     // {col, row}
-  let probeIsTarget = false;    // true => probe was in memory set
-  let distractorType = 0;       // 3-6
-  let distractorImage = null;   // HTMLImage or null
+  let encodingPositions = [];
+  let currentEncodingIndex = 0;
+  let currentLoad = 1;
+  let probePosition = null;
+  let probeIsTarget = false;
+  let distractorType = 0;
+  let distractorImage = null;
 
-  // Response
   let responseKey = null;
   let responseTime = NaN;
   let probeOnsetTime = 0;
 
-  // Gaze series for current trial
   let pupilSeries = [];
   let gazeXSeries = [];
   let gazeYSeries = [];
 
-  // Current gaze frame
   let currentGaze = { x: 0, y: 0, pupil: 0, valid: false };
 
-  // Image pools
   let neutralImages = [];
   let emotionalImages = [];
   let imagesLoaded = false;
 
-  // Shuffled trial plan
   let trialPlan = [];
 
-  // Grid cell size (computed on mount)
   let cellW = 0;
   let cellH = 0;
   let gridOffsetX = 0;
   let gridOffsetY = 0;
 
-  // Encouragement messages for break screen
   const breakMessages = [
     '休息一下，放松眼睛',
-    '你做得非常棒',
-    '深呼吸，准备下一关',
-    '离胜利越来越近了',
-    '保持专注，继续加油',
-    '你是最棒的',
-    '已经过半了，坚持住',
+    '喝口水也可以',
+    '准备好再继续',
+    '下一关会马上开始',
+    '眼睛看屏幕中间',
+    '按空格进入下一关',
+    '已经过半了',
     '快要完成了',
   ];
 
-  // ═══════════════════════════════════════════════════════════════
-  // Image loading
-  // ═══════════════════════════════════════════════════════════════
   function loadImage(src) {
     return new Promise((resolve) => {
       const img = new Image();
@@ -134,12 +97,9 @@
   }
 
   async function preloadImages() {
-    // Try to load images from static/images/
-    // If none exist, we'll generate placeholder shapes
     const neutralPaths = [];
     const emotionalPaths = [];
 
-    // Attempt to load numbered images (1..20)
     for (let i = 1; i <= 20; i++) {
       neutralPaths.push(`/images/neutral/${i}.jpg`);
       emotionalPaths.push(`/images/emotional/${i}.jpg`);
@@ -153,13 +113,9 @@
     imagesLoaded = true;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Trial plan generation
-  // ═══════════════════════════════════════════════════════════════
   function generateTrialPlan() {
     const plan = [];
 
-    // Build a base pool of 16 condition combinations.
     const combos = [];
     for (const load of [1, 2]) {
       for (const dType of DISTRACTOR_TYPES) {
@@ -169,7 +125,6 @@
       }
     }
 
-    // Repeat combos to fill requested total trial count.
     for (let i = 0; i < totalTrials; i++) {
       const c = combos[i % combos.length];
       plan.push({
@@ -182,12 +137,10 @@
       });
     }
 
-    // Fisher-Yates shuffle globally across all 160 trials
     for (let i = plan.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [plan[i], plan[j]] = [plan[j], plan[i]];
     }
-    // Assign trialNum / blockNum / trialInBlock AFTER shuffle
     for (let i = 0; i < plan.length; i++) {
       plan[i].trialNum = i + 1;
       plan[i].blockNum = Math.floor(i / trialsPerBlock) + 1;
@@ -196,11 +149,7 @@
     return plan;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Grid helpers
-  // ═══════════════════════════════════════════════════════════════
   function computeGrid() {
-    // Center a 4x4 grid in the screen, each cell ~120px
     const targetCellSize = Math.min(screenW, screenH) * 0.12;
     cellW = targetCellSize;
     cellH = targetCellSize;
@@ -232,28 +181,22 @@
     return positions;
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Trial setup
-  // ═══════════════════════════════════════════════════════════════
   function setupTrial(planEntry) {
     trialNum = planEntry.trialNum;
     blockNum = planEntry.blockNum;
     trialInBlock = planEntry.trialInBlock;
     distractorType = planEntry.distractorType;
 
-    // Generate encoding positions: load dots per array * 3 arrays = load*3 unique positions
     const load = planEntry.load;
     currentLoad = load;
     encodingPositions = randomGridPositions(load * NUM_ENCODING_ARRAYS);
     currentEncodingIndex = 0;
 
-    // Probe: 50% target (from memory set), 50% novel
     if (planEntry.isTarget) {
       probeIsTarget = true;
       probePosition = encodingPositions[Math.floor(Math.random() * encodingPositions.length)];
     } else {
       probeIsTarget = false;
-      // Random position NOT in encoding set
       const encodingKeys = new Set(encodingPositions.map((p) => `${p.col},${p.row}`));
       let pos;
       do {
@@ -262,7 +205,6 @@
       probePosition = pos;
     }
 
-    // Pick distractor image
     distractorImage = null;
     if (distractorType === 3 && neutralImages.length > 0) {
       distractorImage = neutralImages[trialNum % neutralImages.length];
@@ -270,20 +212,15 @@
       distractorImage = emotionalImages[trialNum % emotionalImages.length];
     }
 
-    // Reset response
     responseKey = null;
     responseTime = NaN;
     probeOnsetTime = 0;
 
-    // Reset gaze series
     pupilSeries = [];
     gazeXSeries = [];
     gazeYSeries = [];
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Phase transitions
-  // ═══════════════════════════════════════════════════════════════
   function enterPhase(newPhase) {
     taskPhase = newPhase;
     phaseStartTime = performance.now();
@@ -294,8 +231,6 @@
 
     switch (taskPhase) {
       case 'intro':
-        // Wait for user to press any key to start (changed from timed start)
-        // Intro will start when handleKeyDown detects a non-Escape key.
         break;
 
       case 'fixation':
@@ -343,7 +278,6 @@
 
       case 'probe':
         if (elapsed >= PROBE_MS) {
-          // Time's up, no response
           finishTrial();
         }
         break;
@@ -355,11 +289,9 @@
         break;
 
       case 'break':
-        // Break lasts until user presses space.
         break;
 
       case 'complete':
-        // Do nothing, we're done
         break;
     }
   }
@@ -376,7 +308,6 @@
   }
 
   function finishTrial() {
-    // Determine correctness
     const correct = determineCorrect();
 
     const sanitizeSeries = (series) => series.map((v) => (Number.isFinite(v) ? v : null));
@@ -395,12 +326,10 @@
       gaze_y_series: sanitizeSeries(gazeYSeries),
     };
 
-    // Send to Rust
     invoke('submit_trial_result', { trial: trialResult }).catch((e) => {
       console.error('submit_trial_result error:', e);
     });
 
-    // Record in store
     recordTrial(trialResult);
 
     enterPhase('feedback');
@@ -415,7 +344,6 @@
   }
 
   function advanceAfterFeedback() {
-    // Check if end of block
     if (trialInBlock >= trialsPerBlock && blockNum < totalBlocks) {
       enterPhase('break');
       return;
@@ -423,14 +351,11 @@
     startNextTrial();
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Input handling
-  // ═══════════════════════════════════════════════════════════════
   function handleKeyDown(e) {
-    // ESC — Bug C: gives the parent (or a panicking kid) a way out.
+    // ESC opens a confirmation overlay once a run has started.
     if (e.key === 'Escape') {
       if (showExitConfirm) {
-        // ESC again while confirm is up → dismiss (safer than double-exit).
+        // ESC again dismisses the overlay.
         showExitConfirm = false;
         return;
       }
@@ -447,14 +372,12 @@
     // accidentally answer the probe underneath.
     if (showExitConfirm) return;
 
-    // Start trial from intro on any non-escape key
     if (taskPhase === 'intro') {
       startNextTrial();
       return;
     }
 
     if (taskPhase === 'probe' && !responseKey) {
-      // Accept main-row '1' or '2' and numpad 'Numpad1'/'Numpad2'
       if (e.key === '1' || e.code === 'Numpad1') {
         responseKey = '1';
         responseTime = performance.now() - probeOnsetTime;
@@ -491,17 +414,12 @@
     }
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Rendering
-  // ═══════════════════════════════════════════════════════════════
   function render() {
     if (!ctx || !canvas) return;
     const now = performance.now();
 
-    // Phase logic
     handlePhaseLogic(now);
 
-    // Clear
     const w = canvas.width;
     const h = canvas.height;
 
@@ -535,7 +453,6 @@
         break;
     }
 
-    // ESC confirm dialog always paints on top (Bug C).
     if (showExitConfirm) {
       drawExitConfirm();
     }
@@ -544,8 +461,7 @@
   }
 
   function drawExitConfirm() {
-    // Warm, kid-friendly modal — orange + cream palette matching the rest
-    // of the app. Not a flat-gray system dialog on purpose.
+    // Keep the modal in the same visual language as the task screen.
     ctx.fillStyle = 'rgba(43, 24, 16, 0.65)';
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -554,20 +470,16 @@
     const cardX = (screenW - cardW) / 2;
     const cardY = (screenH - cardH) / 2;
 
-    // Card shadow
     ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
     drawRoundRect(cardX, cardY + 8, cardW, cardH, 24);
     ctx.fill();
-    // Card body
     ctx.fillStyle = '#FFF8F0';
     drawRoundRect(cardX, cardY, cardW, cardH, 24);
     ctx.fill();
-    // Orange top accent band
     ctx.fillStyle = '#FF8C42';
     drawRoundRect(cardX, cardY, cardW, 8, 24);
     ctx.fill();
 
-    // Title
     ctx.textAlign = 'center';
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = '#2B1810';
@@ -588,7 +500,6 @@
     ctx.font = '400 13px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText('按 ESC 可以取消', cardX + cardW / 2, cardY + 120);
 
-    // Buttons
     const btnW = 140;
     const btnH = 48;
     const btnY = cardY + cardH - btnH - 28;
@@ -597,7 +508,6 @@
     const leftX = cardX + (cardW - totalW) / 2;
     const rightX = leftX + btnW + gap;
 
-    // Continue (primary orange)
     ctx.fillStyle = '#FF8C42';
     drawRoundRect(leftX, btnY, btnW, btnH, btnH / 2);
     ctx.fill();
@@ -606,7 +516,6 @@
     ctx.textBaseline = 'middle';
     ctx.fillText('继续闯关', leftX + btnW / 2, btnY + btnH / 2);
 
-    // Exit (ghost / danger)
     ctx.fillStyle = '#FFF8F0';
     drawRoundRect(rightX, btnY, btnW, btnH, btnH / 2);
     ctx.fill();
@@ -617,10 +526,8 @@
     ctx.fillStyle = '#E94F4F';
     ctx.fillText('退出', rightX + btnW / 2, btnY + btnH / 2);
 
-    // reset baseline so later draws aren't surprised
     ctx.textBaseline = 'alphabetic';
 
-    // Record hit-boxes for click dispatch
     exitConfirmButtons = {
       continue: { x: leftX, y: btnY, w: btnW, h: btnH },
       exit: { x: rightX, y: btnY, w: btnW, h: btnH },
@@ -638,8 +545,6 @@
     'post_distractor_fixation',
     'probe',
   ]);
-
-  // ── Draw helpers ───────────────────────────────────────────────
 
   function drawRoundRect(x, y, w, h, r) {
     ctx.beginPath();
@@ -696,10 +601,7 @@
     ctx.stroke();
   }
 
-  // ── Phase renderers ────────────────────────────────────────────
-
   function drawIntro(_now) {
-    // Warm cream background
     ctx.fillStyle = '#FFF8F0';
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -721,7 +623,6 @@
     ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText('按任意键开始', screenW / 2, screenH / 2 + 90);
 
-    // Trial info
     ctx.fillStyle = '#FF8C42';
     ctx.font = '600 14px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(`共 ${totalBlocks} 关 x ${trialsPerBlock} 题`, screenW / 2, screenH / 2 + 130);
@@ -737,7 +638,6 @@
     drawBlackBg();
     drawFaintGrid();
 
-    // Render all `load` dots for the current array (array index = currentEncodingIndex)
     const dotRadius = cellW * 0.15;
     const sliceStart = currentEncodingIndex * currentLoad;
     const sliceEnd = sliceStart + currentLoad;
@@ -759,7 +659,6 @@
   }
 
   function drawDistractor(_now) {
-    // Gray background (40,40,40)
     ctx.fillStyle = '#282828';
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -780,7 +679,6 @@
           }
           ctx.drawImage(distractorImage, cx - drawW / 2, cy - drawH / 2, drawW, drawH);
         } else {
-          // Fallback: colored rectangle placeholder
           ctx.fillStyle = distractorType === 3 ? '#3A3A4A' : '#4A3A3A';
           ctx.fillRect(cx - imgSize / 2, cy - imgSize / 2, imgSize, imgSize);
           ctx.fillStyle = 'rgba(255,255,255,0.2)';
@@ -791,10 +689,8 @@
         break;
 
       case 5: // gray shape
-        // Draw a simple geometric shape
         ctx.fillStyle = '#505060';
         ctx.beginPath();
-        // Diamond shape
         ctx.moveTo(cx, cy - imgSize * 0.3);
         ctx.lineTo(cx + imgSize * 0.3, cy);
         ctx.lineTo(cx, cy + imgSize * 0.3);
@@ -804,7 +700,6 @@
         break;
 
       case 6: // blank
-        // Just the gray background, nothing more
         break;
     }
   }
@@ -817,13 +712,11 @@
       const { x, y } = gridCellCenter(probePosition.col, probePosition.row);
       const dotRadius = cellW * 0.15;
 
-      // Yellow probe dot
       ctx.beginPath();
       ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
       ctx.fillStyle = '#FFD166';
       ctx.fill();
 
-      // Glow
       const grad = ctx.createRadialGradient(x, y, dotRadius * 0.5, x, y, dotRadius * 1.5);
       grad.addColorStop(0, 'rgba(255, 209, 102, 0.3)');
       grad.addColorStop(1, 'rgba(255, 209, 102, 0)');
@@ -833,7 +726,6 @@
       ctx.fill();
     }
 
-    // Response hint at bottom
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255, 248, 240, 0.5)';
     ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -848,13 +740,11 @@
     const correct = determineCorrect();
 
     if (correct) {
-      // Mint circle with checkmark
       ctx.beginPath();
       ctx.arc(cx, cy - 20, 40, 0, Math.PI * 2);
       ctx.fillStyle = '#4ECDC4';
       ctx.fill();
 
-      // Checkmark
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
@@ -865,22 +755,19 @@
       ctx.lineTo(cx + 16, cy - 32);
       ctx.stroke();
 
-      // Text
       ctx.textAlign = 'center';
       ctx.fillStyle = '#4ECDC4';
       ctx.font = '800 24px "PingFang SC", "Microsoft YaHei", sans-serif';
       ctx.fillText('太棒了', cx, cy + 50);
       ctx.fillStyle = 'rgba(78, 205, 196, 0.6)';
       ctx.font = '500 16px "PingFang SC", "Microsoft YaHei", sans-serif';
-      ctx.fillText('继续加油', cx, cy + 80);
+      ctx.fillText('看下一题', cx, cy + 80);
     } else {
-      // Orange circle with arrow
       ctx.beginPath();
       ctx.arc(cx, cy - 20, 40, 0, Math.PI * 2);
       ctx.fillStyle = '#FF8C42';
       ctx.fill();
 
-      // Forward arrow
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 4;
       ctx.lineCap = 'round';
@@ -895,7 +782,6 @@
       ctx.lineTo(cx + 4, cy - 10);
       ctx.stroke();
 
-      // Text
       ctx.textAlign = 'center';
       ctx.fillStyle = '#FF8C42';
       ctx.font = '800 24px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -907,7 +793,6 @@
   }
 
   function drawBreak(now) {
-    // Warm cream background
     ctx.fillStyle = '#FFF8F0';
     ctx.fillRect(0, 0, screenW, screenH);
 
@@ -917,12 +802,10 @@
 
     ctx.textAlign = 'center';
 
-    // Block completion
     ctx.fillStyle = '#FF8C42';
     ctx.font = '800 28px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(`第 ${blockNum} 关完成`, cx, cy - 60);
 
-    // Encouragement
     ctx.fillStyle = '#2B1810';
     ctx.font = '600 22px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(breakMessages[msgIndex], cx, cy);
@@ -931,7 +814,6 @@
     ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText('建议休息 1 分钟', cx, cy + 34);
 
-    // Progress bar
     const barW = screenW * 0.5;
     const barH = 12;
     const barX = cx - barW / 2;
@@ -950,7 +832,6 @@
     ctx.font = '500 14px "PingFang SC", "Microsoft YaHei", sans-serif';
     ctx.fillText(`${blockNum} / ${totalBlocks}`, cx, barY + 36);
 
-    // Continue hint
     const pulse = 0.5 + 0.5 * Math.sin(((now - phaseStartTime) / 1000) * 2);
     ctx.fillStyle = `rgba(139, 111, 92, ${0.4 + pulse * 0.4})`;
     ctx.font = '400 16px "PingFang SC", "Microsoft YaHei", sans-serif';
@@ -964,7 +845,6 @@
     const cx = screenW / 2;
     const cy = screenH / 2;
 
-    // Big success circle
     ctx.beginPath();
     ctx.arc(cx, cy - 40, 50, 0, Math.PI * 2);
     ctx.fillStyle = '#4ECDC4';
@@ -991,9 +871,6 @@
     ctx.fillText('正在生成报告...', cx, cy + 80);
   }
 
-  // ═══════════════════════════════════════════════════════════════
-  // Lifecycle
-  // ═══════════════════════════════════════════════════════════════
   onMount(async () => {
     if (!canvas) return;
     ctx = canvas.getContext('2d');
@@ -1004,11 +881,9 @@
 
     computeGrid();
 
-    // Generate trial plan
     trialPlan = generateTrialPlan();
     planCursor = 0;
 
-    // Preload images (non-blocking)
     preloadImages();
 
     // Listen for gaze events. Sampling happens HERE (driven by real camera
@@ -1034,12 +909,10 @@
       }
     });
 
-    // Key handler
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('resize', handleResize);
     canvas.addEventListener('click', handleCanvasClick);
 
-    // Start intro
     enterPhase('intro');
     animFrameId = requestAnimationFrame(render);
   });

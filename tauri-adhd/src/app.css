@@ -1,10 +1,6 @@
-/* ════════════════════════════════════════════════════════════════
-   ADHD Screening & Training — Global Theme
-   ════════════════════════════════════════════════════════════════ */
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&display=swap');
 
 :root {
-  /* Domain Colors (Role-based) */
   --c-coral: #FFB0A0;
   --c-coral-light: #FFD1C1;
   --c-coral-dark: #FF8C73;
@@ -21,7 +17,6 @@
   --c-blue-light: #CDEBFF;
   --c-blue-dark: #7ABCE5;
 
-  /* Current Active Theme (Default fallback) */
   --primary: var(--c-coral);
   --primary-light: var(--c-coral-light);
   --primary-dark: var(--c-coral-dark);
@@ -44,7 +39,6 @@
   --success: #A8E6CF;
   --warning: #FFE699;
 
-  /* Spacing */
   --space-xs: 6px;
   --space-sm: 12px;
   --space-md: 20px;
@@ -52,19 +46,16 @@
   --space-xl: 48px;
   --space-2xl: 64px;
 
-  /* Radii - Extremely Squishy & safe */
   --radius-sm: 32px;
   --radius-md: 48px;
   --radius-lg: 64px;
   --radius-xl: 80px;
   --radius-pill: 9999px;
 
-  /* Soft Ambient Shadows (Fluffy, diffuse, warm tone) */
   --shadow-sm: 0 12px 32px rgba(163, 150, 138, 0.12);
   --shadow-md: 0 20px 48px rgba(163, 150, 138, 0.15);
   --shadow-lg: 0 32px 64px rgba(163, 150, 138, 0.2);
 
-  /* Typography */
   --font-family: "Nunito", "SF Pro Rounded", "ui-rounded", "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
   --font-size-sm: 14px;
   --font-size-base: 16px;
@@ -73,11 +64,9 @@
   --font-size-2xl: 32px;
   --font-size-3xl: 40px;
 
-  /* Bottom nav height */
   --nav-height: 72px;
 }
 
-/* ── Reset & Base ─────────────────────────────────────────────── */
 *,
 *::before,
 *::after {
@@ -124,7 +113,6 @@ textarea {
   outline: none;
 }
 
-/* ── Scrollbar styling ────────────────────────────────────────── */
 ::-webkit-scrollbar {
   width: 6px;
 }
@@ -139,7 +127,6 @@ textarea {
   opacity: 0.3;
 }
 
-/* ── Utility classes ──────────────────────────────────────────── */
 .page-content {
   padding: var(--space-lg);
   padding-bottom: calc(var(--nav-height) + var(--space-lg));
@@ -163,7 +150,6 @@ textarea {
   box-shadow: var(--shadow-md);
 }
 
-/* Bouncy Jelly Buttons */
 .btn-primary {
   display: inline-flex;
   align-items: center;
@@ -267,7 +253,6 @@ textarea {
   font-weight: 600;
 }
 
-/* ── Animations ───────────────────────────────────────────────── */
 @keyframes fadeIn {
   from {
     opacity: 0;
@@ -320,7 +305,6 @@ textarea {
   animation: float 4s ease-in-out infinite;
 }
 
-/* Stagger Utilities */
 .stagger-1 { animation-delay: 0.1s; }
 .stagger-2 { animation-delay: 0.2s; }
 .stagger-3 { animation-delay: 0.3s; }

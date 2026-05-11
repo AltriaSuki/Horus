@@ -15,15 +15,11 @@ use tract_onnx::prelude::*;
 
 use crate::gaze_math::Landmark;
 
-// ═══════════════════════════════════════════════════════════════════
 // Type aliases for tract plans
-// ═══════════════════════════════════════════════════════════════════
 
 type OnnxPlan = TypedRunnableModel<TypedModel>;
 
-// ═══════════════════════════════════════════════════════════════════
 // BlazeFace SSD anchors
-// ═══════════════════════════════════════════════════════════════════
 
 /// Pre-computed anchor centres for the BlazeFace SSD head.
 ///
@@ -61,9 +57,7 @@ fn generate_blazeface_anchors() -> Vec<[f32; 2]> {
     anchors
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Crop transform helpers
-// ═══════════════════════════════════════════════════════════════════
 
 /// A rectangle in original-image pixel coordinates.
 #[derive(Clone, Copy, Debug)]
@@ -76,12 +70,7 @@ struct Rect {
 
 /// Crop a region from an RGB image, resize to `(out_w, out_h)`.
 /// Returns the cropped-and-resized image and the Rect used.
-fn crop_and_resize(
-    img: &RgbImage,
-    rect: Rect,
-    out_w: u32,
-    out_h: u32,
-) -> (RgbImage, Rect) {
+fn crop_and_resize(img: &RgbImage, rect: Rect, out_w: u32, out_h: u32) -> (RgbImage, Rect) {
     let (iw, ih) = (img.width() as f32, img.height() as f32);
 
     // Clamp the rect to image bounds
@@ -98,14 +87,13 @@ fn crop_and_resize(
     };
 
     let sub = image::imageops::crop_imm(img, x0, y0, x1 - x0, y1 - y0).to_image();
-    let resized = image::imageops::resize(&sub, out_w, out_h, image::imageops::FilterType::Triangle);
+    let resized =
+        image::imageops::resize(&sub, out_w, out_h, image::imageops::FilterType::Triangle);
 
     (resized, clamped_rect)
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // FaceMeshDetector
-// ═══════════════════════════════════════════════════════════════════
 
 pub struct FaceMeshDetector {
     face_detector: OnnxPlan,
@@ -128,7 +116,7 @@ impl FaceMeshDetector {
     pub fn load(models_dir: &Path) -> Result<Self> {
         log::info!("Loading face mesh models from {:?}", models_dir);
 
-        // ── Face detector (BlazeFace) ────────────────────────────
+        // Face detector (BlazeFace)
         let det_path = models_dir.join("face_detection.onnx");
         let face_detector = tract_onnx::onnx()
             .model_for_path(&det_path)
@@ -138,7 +126,7 @@ impl FaceMeshDetector {
             .into_runnable()?;
         log::info!("Face detector loaded");
 
-        // ── Face landmarker (FaceMesh 468-point) ─────────────────
+        // Face landmarker (FaceMesh 468-point)
         // MediaPipe's face_landmark.tflite contains CUSTOM ops (flex delegate
         // kernels) that neither tract-onnx nor tract-tflite can parse. If
         // loading fails we continue WITHOUT face landmarks: iris tracking
@@ -160,7 +148,7 @@ impl FaceMeshDetector {
             }
         };
 
-        // ── Iris landmarker ──────────────────────────────────────
+        // Iris landmarker
         let iris_path = models_dir.join("iris_landmark.onnx");
         let iris_landmarker = tract_onnx::onnx()
             .model_for_path(&iris_path)
@@ -200,7 +188,8 @@ impl FaceMeshDetector {
             Err(e) => {
                 log::warn!(
                     "tract-tflite could not load {:?}: {}. Trying .onnx sibling...",
-                    path, e
+                    path,
+                    e
                 );
                 let onnx_path = path.with_extension("onnx");
                 if onnx_path.exists() {
@@ -228,16 +217,16 @@ impl FaceMeshDetector {
     pub fn detect(&self, rgb_frame: &[u8], width: u32, height: u32) -> Option<Vec<Landmark>> {
         let img = ImageBuffer::<Rgb<u8>, _>::from_raw(width, height, rgb_frame.to_vec())?;
 
-        // ── Stage 1: Face detection ──────────────────────────────
+        // Stage 1: Face detection
         let face_rect = self.detect_face(&img)?;
 
-        // ── Stage 2: Face landmarks ──────────────────────────────
+        // Stage 2: Face landmarks
         let mut landmarks = match &self.face_landmarker {
             Some(_) => self.detect_landmarks(&img, &face_rect)?,
             None => synthesize_landmarks_from_bbox(&face_rect, width as f32, height as f32),
         };
 
-        // ── Stage 3: Iris refinement ─────────────────────────────
+        // Stage 3: Iris refinement
         self.refine_iris(&img, &mut landmarks);
 
         if landmarks.len() >= 478 {
@@ -251,14 +240,13 @@ impl FaceMeshDetector {
         }
     }
 
-    // ── Stage 1: BlazeFace detection ─────────────────────────────
+    // Stage 1: BlazeFace detection
 
     fn detect_face(&self, img: &RgbImage) -> Option<Rect> {
         let (iw, ih) = (img.width() as f32, img.height() as f32);
 
         // Resize to 128x128, normalise to [-1, 1]
-        let resized =
-            image::imageops::resize(img, 128, 128, image::imageops::FilterType::Triangle);
+        let resized = image::imageops::resize(img, 128, 128, image::imageops::FilterType::Triangle);
 
         // Build NCHW tensor: 1x3x128x128
         let mut input = tract_ndarray::Array4::<f32>::zeros([1, 3, 128, 128]);
@@ -279,7 +267,10 @@ impl FaceMeshDetector {
         //   classificators: [1, num_anchors, 1]  (raw logits → sigmoid)
         //   regressors: [1, num_anchors, 16]  (box offsets + 6 keypoints)
         if outputs.len() < 2 {
-            log::warn!("Face detector returned {} outputs, expected 2", outputs.len());
+            log::warn!(
+                "Face detector returned {} outputs, expected 2",
+                outputs.len()
+            );
             return None;
         }
 
@@ -295,7 +286,8 @@ impl FaceMeshDetector {
         // Determine which output is scores vs regressors by shape
         let (scores_view, boxes_view) = if scores_tensor.shape().last() == Some(&1)
             || (scores_tensor.ndim() >= 2
-                && scores_tensor.shape()[scores_tensor.ndim() - 1] < boxes_tensor.shape()[boxes_tensor.ndim() - 1])
+                && scores_tensor.shape()[scores_tensor.ndim() - 1]
+                    < boxes_tensor.shape()[boxes_tensor.ndim() - 1])
         {
             (scores_tensor, boxes_tensor)
         } else {
@@ -354,13 +346,17 @@ impl FaceMeshDetector {
 
         log::debug!(
             "Face detected: score={:.3}, rect=({:.0},{:.0},{:.0},{:.0})",
-            best_score, x, y, w, h
+            best_score,
+            x,
+            y,
+            w,
+            h
         );
 
         Some(Rect { x, y, w, h })
     }
 
-    // ── Stage 2: FaceMesh 468-point landmarks ────────────────────
+    // Stage 2: FaceMesh 468-point landmarks
 
     fn detect_landmarks(&self, img: &RgbImage, face_rect: &Rect) -> Option<Vec<Landmark>> {
         let (iw, ih) = (img.width() as f32, img.height() as f32);
@@ -426,7 +422,7 @@ impl FaceMeshDetector {
         Some(landmarks)
     }
 
-    // ── Stage 3: Iris landmark refinement ────────────────────────
+    // Stage 3: Iris landmark refinement
 
     fn refine_iris(&self, img: &RgbImage, landmarks: &mut Vec<Landmark>) {
         let (iw, ih) = (img.width() as f32, img.height() as f32);
@@ -526,7 +522,10 @@ impl FaceMeshDetector {
 
         // Expected: 5 * 3 = 15 values (x, y, z per iris point)
         if iris_flat.len() < 15 {
-            log::warn!("Iris landmarker returned {} values, expected >= 15", iris_flat.len());
+            log::warn!(
+                "Iris landmarker returned {} values, expected >= 15",
+                iris_flat.len()
+            );
             return None;
         }
 
@@ -560,42 +559,93 @@ fn synthesize_landmarks_from_bbox(bbox: &Rect, img_w: f32, img_h: f32) -> Vec<La
     let fh = bbox.h / img_h;
 
     // Rough anthropometric ratios within a face bbox (MediaPipe-ish)
-    let eye_y = cy - 0.10 * fh;            // eyes sit ~10% above bbox center
-    let eye_half_span = 0.20 * fw;         // each eye ~20% of face width from center
-    let eye_radius = 0.08 * fw;            // inner→outer corner half-width
-    let eye_lid_offset = 0.03 * fh;        // upper/lower eyelid vertical offset
+    let eye_y = cy - 0.10 * fh; // eyes sit ~10% above bbox center
+    let eye_half_span = 0.20 * fw; // each eye ~20% of face width from center
+    let eye_radius = 0.08 * fw; // inner→outer corner half-width
+    let eye_lid_offset = 0.03 * fh; // upper/lower eyelid vertical offset
 
     let right_eye_cx = cx - eye_half_span; // anatomical right = image left
-    let left_eye_cx  = cx + eye_half_span;
+    let left_eye_cx = cx + eye_half_span;
 
     // Eye corners (anatomical convention matching gaze_math.rs)
-    lm[33]  = Landmark { x: right_eye_cx - eye_radius, y: eye_y }; // right outer
-    lm[133] = Landmark { x: right_eye_cx + eye_radius, y: eye_y }; // right inner
-    lm[362] = Landmark { x: left_eye_cx  - eye_radius, y: eye_y }; // left inner
-    lm[263] = Landmark { x: left_eye_cx  + eye_radius, y: eye_y }; // left outer
+    lm[33] = Landmark {
+        x: right_eye_cx - eye_radius,
+        y: eye_y,
+    }; // right outer
+    lm[133] = Landmark {
+        x: right_eye_cx + eye_radius,
+        y: eye_y,
+    }; // right inner
+    lm[362] = Landmark {
+        x: left_eye_cx - eye_radius,
+        y: eye_y,
+    }; // left inner
+    lm[263] = Landmark {
+        x: left_eye_cx + eye_radius,
+        y: eye_y,
+    }; // left outer
 
     // EAR landmarks for right eye: [33, 160, 158, 133, 153, 144]
     // p2=160 (upper-inner), p3=158 (upper-outer) — above eye line
     // p5=153 (lower-outer), p6=144 (lower-inner) — below eye line
-    lm[160] = Landmark { x: right_eye_cx - eye_radius * 0.3, y: eye_y - eye_lid_offset };
-    lm[158] = Landmark { x: right_eye_cx + eye_radius * 0.3, y: eye_y - eye_lid_offset };
-    lm[153] = Landmark { x: right_eye_cx + eye_radius * 0.3, y: eye_y + eye_lid_offset };
-    lm[144] = Landmark { x: right_eye_cx - eye_radius * 0.3, y: eye_y + eye_lid_offset };
+    lm[160] = Landmark {
+        x: right_eye_cx - eye_radius * 0.3,
+        y: eye_y - eye_lid_offset,
+    };
+    lm[158] = Landmark {
+        x: right_eye_cx + eye_radius * 0.3,
+        y: eye_y - eye_lid_offset,
+    };
+    lm[153] = Landmark {
+        x: right_eye_cx + eye_radius * 0.3,
+        y: eye_y + eye_lid_offset,
+    };
+    lm[144] = Landmark {
+        x: right_eye_cx - eye_radius * 0.3,
+        y: eye_y + eye_lid_offset,
+    };
 
     // EAR landmarks for left eye: [362, 385, 387, 263, 373, 380]
     // p2=385 (upper), p3=387 (upper) — above eye line
     // p5=373 (lower), p6=380 (lower) — below eye line
-    lm[385] = Landmark { x: left_eye_cx - eye_radius * 0.3, y: eye_y - eye_lid_offset };
-    lm[387] = Landmark { x: left_eye_cx + eye_radius * 0.3, y: eye_y - eye_lid_offset };
-    lm[373] = Landmark { x: left_eye_cx + eye_radius * 0.3, y: eye_y + eye_lid_offset };
-    lm[380] = Landmark { x: left_eye_cx - eye_radius * 0.3, y: eye_y + eye_lid_offset };
+    lm[385] = Landmark {
+        x: left_eye_cx - eye_radius * 0.3,
+        y: eye_y - eye_lid_offset,
+    };
+    lm[387] = Landmark {
+        x: left_eye_cx + eye_radius * 0.3,
+        y: eye_y - eye_lid_offset,
+    };
+    lm[373] = Landmark {
+        x: left_eye_cx + eye_radius * 0.3,
+        y: eye_y + eye_lid_offset,
+    };
+    lm[380] = Landmark {
+        x: left_eye_cx - eye_radius * 0.3,
+        y: eye_y + eye_lid_offset,
+    };
 
     // Face structural points used for head pose estimation
-    lm[1]   = Landmark { x: cx,                          y: cy + 0.05 * fh }; // nose tip
-    lm[10]  = Landmark { x: cx,                          y: cy - 0.45 * fh }; // forehead
-    lm[152] = Landmark { x: cx,                          y: cy + 0.45 * fh }; // chin
-    lm[234] = Landmark { x: cx - 0.45 * fw,              y: cy };             // left cheek (image)
-    lm[454] = Landmark { x: cx + 0.45 * fw,              y: cy };             // right cheek (image)
+    lm[1] = Landmark {
+        x: cx,
+        y: cy + 0.05 * fh,
+    }; // nose tip
+    lm[10] = Landmark {
+        x: cx,
+        y: cy - 0.45 * fh,
+    }; // forehead
+    lm[152] = Landmark {
+        x: cx,
+        y: cy + 0.45 * fh,
+    }; // chin
+    lm[234] = Landmark {
+        x: cx - 0.45 * fw,
+        y: cy,
+    }; // left cheek (image)
+    lm[454] = Landmark {
+        x: cx + 0.45 * fw,
+        y: cy,
+    }; // right cheek (image)
 
     lm
 }

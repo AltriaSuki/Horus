@@ -1,46 +1,59 @@
-//! Feature extraction (27D) + Random Forest prediction.
+//! Feature extraction and random-forest prediction.
 //!
-//! Faithful port of `engine/adhd_engine/worker/inference.py`.
-//! Every feature name and computation matches the Python version exactly.
-//! The RF model is loaded from `models/rf_model.json` (exported in Phase 0).
+//! The model expects the same 27-feature layout used by the original Python
+//! training code. Runtime loads `models/rf_model.json`.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
-// ═══════════════════════════════════════════════════════════════════
-// Trial data — matches Python's TrialData dataclass
-// ═══════════════════════════════════════════════════════════════════
+// Trial data
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TrialResult {
     pub trial_num: u32,
     pub block_num: u32,
-    pub load: u32,                   // 1 or 2
-    pub distractor_type: u32,        // 3-6
-    pub response: Option<String>,    // "f" or "j" or null
-    pub reaction_time: f64,          // seconds (NaN if no response)
+    pub load: u32,                // 1 or 2
+    pub distractor_type: u32,     // 3-6
+    pub response: Option<String>, // "f" or "j" or null
+    pub reaction_time: f64,       // seconds (NaN if no response)
     pub correct: bool,
     pub pupil_series: Vec<Option<f32>>,
     pub gaze_x_series: Vec<Option<f64>>,
     pub gaze_y_series: Vec<Option<f64>>,
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // 27-feature extraction
-// ═══════════════════════════════════════════════════════════════════
 
 /// All 27 feature names in the order the Python code produces them.
 pub const ALL_FEATURES: &[&str] = &[
-    "mean_rt", "std_rt", "cv_rt", "rt_skewness",
-    "accuracy", "omission_rate", "rt_diff_correct_incorrect",
-    "pupil_max_peak", "pupil_mean_change", "pupil_std_of_means",
-    "pupil_overall_var", "pupil_peak_latency", "pupil_slope",
-    "pupil_auc", "pupil_late_minus_early", "pupil_slope_var",
-    "pupil_load_diff", "pupil_peak_load_diff",
-    "gaze_var_x", "gaze_var_y", "gaze_path_normalized",
-    "mean_rt_load1", "mean_rt_load2", "rt_load_diff",
-    "acc_load_diff", "rt_distractor_slope", "acc_distractor_slope",
+    "mean_rt",
+    "std_rt",
+    "cv_rt",
+    "rt_skewness",
+    "accuracy",
+    "omission_rate",
+    "rt_diff_correct_incorrect",
+    "pupil_max_peak",
+    "pupil_mean_change",
+    "pupil_std_of_means",
+    "pupil_overall_var",
+    "pupil_peak_latency",
+    "pupil_slope",
+    "pupil_auc",
+    "pupil_late_minus_early",
+    "pupil_slope_var",
+    "pupil_load_diff",
+    "pupil_peak_load_diff",
+    "gaze_var_x",
+    "gaze_var_y",
+    "gaze_path_normalized",
+    "mean_rt_load1",
+    "mean_rt_load2",
+    "rt_load_diff",
+    "acc_load_diff",
+    "rt_distractor_slope",
+    "acc_distractor_slope",
 ];
 
 /// Extract 27 features from trial results.
@@ -58,7 +71,7 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     let n_trials = trials.len();
     let baseline_frames = (fps * 0.5).max(1.0) as usize;
 
-    // ── Behavioural features (7) ─────────────────────────────────
+    // Behavioural features
     let mut rts: Vec<f64> = Vec::new();
     let mut performs: Vec<f64> = Vec::new();
     let mut loads: Vec<f64> = Vec::new();
@@ -94,8 +107,11 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     for t in trials {
         if t.response.is_some() && !t.reaction_time.is_nan() {
             let rt_ms = t.reaction_time * 1000.0;
-            if t.correct { rt_correct.push(rt_ms); }
-            else { rt_incorrect.push(rt_ms); }
+            if t.correct {
+                rt_correct.push(rt_ms);
+            } else {
+                rt_incorrect.push(rt_ms);
+            }
         }
     }
     let rt_diff_ci = if rt_correct.is_empty() || rt_incorrect.is_empty() {
@@ -104,7 +120,7 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
         mean(&rt_incorrect) - mean(&rt_correct)
     };
 
-    // ── Pupil features (11) ──────────────────────────────────────
+    // Pupil features
     struct PupilFeats {
         max_peak: f64,
         mean_change: f64,
@@ -120,42 +136,59 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     pupil_by_load.insert(2, Vec::new());
 
     for t in trials {
-        let pupil: Vec<f64> = t.pupil_series
+        let pupil: Vec<f64> = t
+            .pupil_series
             .iter()
             .map(|v| v.unwrap_or(f32::NAN) as f64)
             .collect();
-        if pupil.len() < baseline_frames * 3 { continue; }
+        if pupil.len() < baseline_frames * 3 {
+            continue;
+        }
 
-        let valid_idx: Vec<usize> = (0..pupil.len())
-            .filter(|&i| !pupil[i].is_nan())
-            .collect();
-        if valid_idx.len() < baseline_frames { continue; }
+        let valid_idx: Vec<usize> = (0..pupil.len()).filter(|&i| !pupil[i].is_nan()).collect();
+        if valid_idx.len() < baseline_frames {
+            continue;
+        }
 
         // Baseline
         let bl_indices = &valid_idx[..baseline_frames];
-        let baseline: f64 = bl_indices.iter()
-            .map(|&i| pupil[i])
-            .sum::<f64>() / baseline_frames as f64;
-        if baseline == 0.0 || baseline.is_nan() { continue; }
+        let baseline: f64 =
+            bl_indices.iter().map(|&i| pupil[i]).sum::<f64>() / baseline_frames as f64;
+        if baseline == 0.0 || baseline.is_nan() {
+            continue;
+        }
 
         // Baseline-correct: (pupil - baseline) / |baseline|
-        let corrected: Vec<f64> = pupil.iter()
-            .map(|&v| if v.is_nan() { f64::NAN } else { (v - baseline) / baseline.abs() })
+        let corrected: Vec<f64> = pupil
+            .iter()
+            .map(|&v| {
+                if v.is_nan() {
+                    f64::NAN
+                } else {
+                    (v - baseline) / baseline.abs()
+                }
+            })
             .collect();
 
-        if valid_idx.len() <= baseline_frames { continue; }
+        if valid_idx.len() <= baseline_frames {
+            continue;
+        }
         let post_idx = &valid_idx[baseline_frames..];
-        let post_data: Vec<f64> = post_idx.iter()
+        let post_data: Vec<f64> = post_idx
+            .iter()
             .map(|&i| corrected[i])
             .filter(|v| !v.is_nan())
             .collect();
-        if post_data.len() < 10 { continue; }
+        if post_data.len() < 10 {
+            continue;
+        }
 
         let max_peak = post_data.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let mean_change = mean(&post_data);
 
         // Peak latency normalised to [0, 1]
-        let peak_idx = post_data.iter()
+        let peak_idx = post_data
+            .iter()
             .enumerate()
             .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
             .map(|(i, _)| i)
@@ -180,25 +213,41 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
         let late_mean = mean(&post_data[mid..]);
 
         let feats = PupilFeats {
-            max_peak, mean_change, peak_latency,
-            slope, auc,
+            max_peak,
+            mean_change,
+            peak_latency,
+            slope,
+            auc,
             late_minus_early: late_mean - early_mean,
         };
 
         if t.load == 1 || t.load == 2 {
             // Clone for the per-load stats
             pupil_by_load.get_mut(&t.load).unwrap().push(PupilFeats {
-                max_peak, mean_change, peak_latency, slope, auc,
+                max_peak,
+                mean_change,
+                peak_latency,
+                slope,
+                auc,
                 late_minus_early: late_mean - early_mean,
             });
         }
         trial_pupil_feats.push(feats);
     }
 
-    let (pupil_max_peak, pupil_mean_change, pupil_std_of_means,
-         pupil_overall_var, pupil_peak_latency, pupil_slope,
-         pupil_auc, pupil_late_minus_early, pupil_slope_var,
-         pupil_load_diff, pupil_peak_load_diff);
+    let (
+        pupil_max_peak,
+        pupil_mean_change,
+        pupil_std_of_means,
+        pupil_overall_var,
+        pupil_peak_latency,
+        pupil_slope,
+        pupil_auc,
+        pupil_late_minus_early,
+        pupil_slope_var,
+        pupil_load_diff,
+        pupil_peak_load_diff,
+    );
 
     if !trial_pupil_feats.is_empty() {
         let peaks: Vec<f64> = trial_pupil_feats.iter().map(|f| f.max_peak).collect();
@@ -210,12 +259,19 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
         pupil_std_of_means = std_dev(&means);
         pupil_overall_var = variance(&peaks);
         pupil_peak_latency = mean(
-            &trial_pupil_feats.iter().map(|f| f.peak_latency).collect::<Vec<_>>());
+            &trial_pupil_feats
+                .iter()
+                .map(|f| f.peak_latency)
+                .collect::<Vec<_>>(),
+        );
         pupil_slope = mean(&slopes);
-        pupil_auc = mean(
-            &trial_pupil_feats.iter().map(|f| f.auc).collect::<Vec<_>>());
+        pupil_auc = mean(&trial_pupil_feats.iter().map(|f| f.auc).collect::<Vec<_>>());
         pupil_late_minus_early = mean(
-            &trial_pupil_feats.iter().map(|f| f.late_minus_early).collect::<Vec<_>>());
+            &trial_pupil_feats
+                .iter()
+                .map(|f| f.late_minus_early)
+                .collect::<Vec<_>>(),
+        );
         pupil_slope_var = std_dev(&slopes);
 
         let l1 = pupil_by_load.get(&1).unwrap();
@@ -232,15 +288,20 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
             pupil_peak_load_diff = 0.0;
         }
     } else {
-        pupil_max_peak = 0.0; pupil_mean_change = 0.0;
-        pupil_std_of_means = 0.0; pupil_overall_var = 0.0;
-        pupil_peak_latency = 0.0; pupil_slope = 0.0;
-        pupil_auc = 0.0; pupil_late_minus_early = 0.0;
-        pupil_slope_var = 0.0; pupil_load_diff = 0.0;
+        pupil_max_peak = 0.0;
+        pupil_mean_change = 0.0;
+        pupil_std_of_means = 0.0;
+        pupil_overall_var = 0.0;
+        pupil_peak_latency = 0.0;
+        pupil_slope = 0.0;
+        pupil_auc = 0.0;
+        pupil_late_minus_early = 0.0;
+        pupil_slope_var = 0.0;
+        pupil_load_diff = 0.0;
         pupil_peak_load_diff = 0.0;
     }
 
-    // ── Gaze features (3) ────────────────────────────────────────
+    // Gaze features
     let mut all_gx: Vec<f64> = Vec::new();
     let mut all_gy: Vec<f64> = Vec::new();
     for t in trials {
@@ -272,28 +333,57 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
         gaze_path_normalized = 0.0;
     }
 
-    // ── Condition features (6) ───────────────────────────────────
-    let valid_trials: Vec<&TrialResult> = trials.iter()
+    // Condition features
+    let valid_trials: Vec<&TrialResult> = trials
+        .iter()
         .filter(|t| t.response.is_some() && !t.reaction_time.is_nan())
         .collect();
 
-    let load1_rts: Vec<f64> = valid_trials.iter()
-        .filter(|t| t.load == 1).map(|t| t.reaction_time * 1000.0).collect();
-    let load2_rts: Vec<f64> = valid_trials.iter()
-        .filter(|t| t.load == 2).map(|t| t.reaction_time * 1000.0).collect();
-    let mean_rt_load1 = if load1_rts.is_empty() { mean_rt } else { mean(&load1_rts) };
-    let mean_rt_load2 = if load2_rts.is_empty() { mean_rt } else { mean(&load2_rts) };
+    let load1_rts: Vec<f64> = valid_trials
+        .iter()
+        .filter(|t| t.load == 1)
+        .map(|t| t.reaction_time * 1000.0)
+        .collect();
+    let load2_rts: Vec<f64> = valid_trials
+        .iter()
+        .filter(|t| t.load == 2)
+        .map(|t| t.reaction_time * 1000.0)
+        .collect();
+    let mean_rt_load1 = if load1_rts.is_empty() {
+        mean_rt
+    } else {
+        mean(&load1_rts)
+    };
+    let mean_rt_load2 = if load2_rts.is_empty() {
+        mean_rt
+    } else {
+        mean(&load2_rts)
+    };
     let rt_load_diff = mean_rt_load2 - mean_rt_load1;
 
     let acc_load1: f64 = {
-        let correct: Vec<f64> = valid_trials.iter()
-            .filter(|t| t.load == 1).map(|t| if t.correct { 1.0 } else { 0.0 }).collect();
-        if correct.is_empty() { accuracy } else { mean(&correct) }
+        let correct: Vec<f64> = valid_trials
+            .iter()
+            .filter(|t| t.load == 1)
+            .map(|t| if t.correct { 1.0 } else { 0.0 })
+            .collect();
+        if correct.is_empty() {
+            accuracy
+        } else {
+            mean(&correct)
+        }
     };
     let acc_load2: f64 = {
-        let correct: Vec<f64> = valid_trials.iter()
-            .filter(|t| t.load == 2).map(|t| if t.correct { 1.0 } else { 0.0 }).collect();
-        if correct.is_empty() { accuracy } else { mean(&correct) }
+        let correct: Vec<f64> = valid_trials
+            .iter()
+            .filter(|t| t.load == 2)
+            .map(|t| if t.correct { 1.0 } else { 0.0 })
+            .collect();
+        if correct.is_empty() {
+            accuracy
+        } else {
+            mean(&correct)
+        }
     };
     let acc_load_diff = acc_load1 - acc_load2;
 
@@ -302,16 +392,26 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
     let mut dist_rt = Vec::new();
     let mut dist_acc = Vec::new();
     for &d in &dist_levels {
-        let d_trials: Vec<&&TrialResult> = valid_trials.iter()
-            .filter(|t| t.distractor_type == d).collect();
+        let d_trials: Vec<&&TrialResult> = valid_trials
+            .iter()
+            .filter(|t| t.distractor_type == d)
+            .collect();
         if d_trials.is_empty() {
             dist_rt.push(f64::NAN);
             dist_acc.push(f64::NAN);
         } else {
-            dist_rt.push(mean(&d_trials.iter()
-                .map(|t| t.reaction_time * 1000.0).collect::<Vec<_>>()));
-            dist_acc.push(mean(&d_trials.iter()
-                .map(|t| if t.correct { 1.0 } else { 0.0 }).collect::<Vec<_>>()));
+            dist_rt.push(mean(
+                &d_trials
+                    .iter()
+                    .map(|t| t.reaction_time * 1000.0)
+                    .collect::<Vec<_>>(),
+            ));
+            dist_acc.push(mean(
+                &d_trials
+                    .iter()
+                    .map(|t| if t.correct { 1.0 } else { 0.0 })
+                    .collect::<Vec<_>>(),
+            ));
         }
     }
 
@@ -328,29 +428,49 @@ pub fn extract_features(trials: &[TrialResult], fps: f64) -> HashMap<String, f64
         acc_distractor_slope = 0.0;
     }
 
-    // ── Build the 27-feature map ─────────────────────────────────
+    // Build the 27-feature map.
     let mut features = HashMap::new();
     let values = [
-        mean_rt, std_rt, cv_rt, rt_skewness,
-        accuracy, omission_rate, rt_diff_ci,
-        pupil_max_peak, pupil_mean_change, pupil_std_of_means,
-        pupil_overall_var, pupil_peak_latency, pupil_slope,
-        pupil_auc, pupil_late_minus_early, pupil_slope_var,
-        pupil_load_diff, pupil_peak_load_diff,
-        gaze_var_x, gaze_var_y, gaze_path_normalized,
-        mean_rt_load1, mean_rt_load2, rt_load_diff,
-        acc_load_diff, rt_distractor_slope, acc_distractor_slope,
+        mean_rt,
+        std_rt,
+        cv_rt,
+        rt_skewness,
+        accuracy,
+        omission_rate,
+        rt_diff_ci,
+        pupil_max_peak,
+        pupil_mean_change,
+        pupil_std_of_means,
+        pupil_overall_var,
+        pupil_peak_latency,
+        pupil_slope,
+        pupil_auc,
+        pupil_late_minus_early,
+        pupil_slope_var,
+        pupil_load_diff,
+        pupil_peak_load_diff,
+        gaze_var_x,
+        gaze_var_y,
+        gaze_path_normalized,
+        mean_rt_load1,
+        mean_rt_load2,
+        rt_load_diff,
+        acc_load_diff,
+        rt_distractor_slope,
+        acc_distractor_slope,
     ];
     for (name, val) in ALL_FEATURES.iter().zip(values.iter()) {
-        let v = if val.is_nan() || val.is_infinite() { 0.0 } else { *val };
+        let v = if val.is_nan() || val.is_infinite() {
+            0.0
+        } else {
+            *val
+        };
         features.insert(name.to_string(), v);
     }
     features
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Random Forest prediction from JSON
-// ═══════════════════════════════════════════════════════════════════
 
 #[derive(Deserialize)]
 pub struct RfModelBundle {
@@ -447,17 +567,24 @@ impl RfModelBundle {
     /// Matches Python's `predict_adhd()` in inference.py.
     pub fn predict(&self, features: &HashMap<String, f64>) -> AdhdReport {
         // 1. Build the full feature vector in training order
-        let x_full: Vec<f64> = self.features.all_features.iter()
+        let x_full: Vec<f64> = self
+            .features
+            .all_features
+            .iter()
             .map(|name| *features.get(name).unwrap_or(&0.0))
             .collect();
 
         // 2. Select the 12 chosen features
-        let x_selected: Vec<f64> = self.features.selected_indices.iter()
+        let x_selected: Vec<f64> = self
+            .features
+            .selected_indices
+            .iter()
             .map(|&i| x_full[i])
             .collect();
 
         // 3. StandardScaler transform
-        let x_scaled: Vec<f64> = x_selected.iter()
+        let x_scaled: Vec<f64> = x_selected
+            .iter()
             .enumerate()
             .map(|(i, &v)| (v - self.scaler.mean[i]) / self.scaler.scale[i])
             .collect();
@@ -508,10 +635,15 @@ impl RfModelBundle {
                 (std, q(0.025), q(0.975))
             };
         let prediction = if adhd_prob >= 0.5 { "ADHD" } else { "Control" };
-        let risk_level = if adhd_prob >= 0.7 { "HIGH" }
-            else if adhd_prob >= 0.5 { "MODERATE" }
-            else if adhd_prob >= 0.3 { "LOW" }
-            else { "MINIMAL" };
+        let risk_level = if adhd_prob >= 0.7 {
+            "HIGH"
+        } else if adhd_prob >= 0.5 {
+            "MODERATE"
+        } else if adhd_prob >= 0.3 {
+            "LOW"
+        } else {
+            "MINIMAL"
+        };
 
         // Feature importance — SPLIT-COUNT APPROXIMATION, not true Gini.
         //
@@ -541,10 +673,7 @@ impl RfModelBundle {
         }
         let total_splits: f64 = counts.iter().sum::<u32>() as f64;
         for (i, name) in self.features.selected_features.iter().enumerate() {
-            feature_importance.insert(
-                name.clone(),
-                counts[i] as f64 / total_splits.max(1.0),
-            );
+            feature_importance.insert(name.clone(), counts[i] as f64 / total_splits.max(1.0));
         }
 
         let mut feature_values = HashMap::new();
@@ -582,9 +711,7 @@ impl Default for AttentionProfile {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// Attention profile + block stats — data expansion features
-// ═══════════════════════════════════════════════════════════════════
+// Attention profile and block stats
 
 /// Compute the 6-dimension attention profile from 27 features.
 ///
@@ -716,12 +843,12 @@ pub fn compute_block_stats(trials: &[TrialResult]) -> Vec<BlockStats> {
     let mut stats = Vec::new();
 
     for block in 1..=max_block {
-        let block_trials: Vec<&TrialResult> = trials.iter()
-            .filter(|t| t.block_num == block)
-            .collect();
+        let block_trials: Vec<&TrialResult> =
+            trials.iter().filter(|t| t.block_num == block).collect();
 
         let n = block_trials.len() as u32;
-        let n_responded: Vec<&TrialResult> = block_trials.iter()
+        let n_responded: Vec<&TrialResult> = block_trials
+            .iter()
             .filter(|t| t.response.is_some() && !t.reaction_time.is_nan())
             .copied()
             .collect();
@@ -731,9 +858,11 @@ pub fn compute_block_stats(trials: &[TrialResult]) -> Vec<BlockStats> {
         let mean_rt_ms = if n_responded.is_empty() {
             0.0
         } else {
-            n_responded.iter()
+            n_responded
+                .iter()
                 .map(|t| t.reaction_time * 1000.0)
-                .sum::<f64>() / n_responded.len() as f64
+                .sum::<f64>()
+                / n_responded.len() as f64
         };
 
         let accuracy = if n_responded.is_empty() {
@@ -772,17 +901,19 @@ fn predict_single_tree(tree: &TreeData, x: &[f64]) -> Vec<f64> {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
 // Statistical helpers
-// ═══════════════════════════════════════════════════════════════════
 
 fn mean(v: &[f64]) -> f64 {
-    if v.is_empty() { return 0.0; }
+    if v.is_empty() {
+        return 0.0;
+    }
     v.iter().sum::<f64>() / v.len() as f64
 }
 
 fn variance(v: &[f64]) -> f64 {
-    if v.len() < 2 { return 0.0; }
+    if v.len() < 2 {
+        return 0.0;
+    }
     let m = mean(v);
     v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / v.len() as f64
 }
@@ -797,11 +928,15 @@ fn skewness(v: &[f64]) -> f64 {
     // the biased sample skewness g1 = m3 / m2^(3/2) *without* the
     // sqrt(n(n-1))/(n-2) adjustment. We must match that exactly so the
     // rt_skewness feature value aligns with what the StandardScaler was fit on.
-    if v.len() < 3 { return 0.0; }
+    if v.len() < 3 {
+        return 0.0;
+    }
     let n = v.len() as f64;
     let m = mean(v);
     let m2: f64 = v.iter().map(|x| (x - m).powi(2)).sum::<f64>() / n;
-    if m2 <= 0.0 { return 0.0; }
+    if m2 <= 0.0 {
+        return 0.0;
+    }
     let m3: f64 = v.iter().map(|x| (x - m).powi(3)).sum::<f64>() / n;
     m3 / m2.powf(1.5)
 }
@@ -809,7 +944,9 @@ fn skewness(v: &[f64]) -> f64 {
 /// Simple linear regression slope: y = slope * x + intercept
 fn linear_slope(y: &[f64]) -> f64 {
     let n = y.len() as f64;
-    if n < 2.0 { return 0.0; }
+    if n < 2.0 {
+        return 0.0;
+    }
     let x_mean = (n - 1.0) / 2.0;
     let y_mean: f64 = y.iter().sum::<f64>() / n;
     let mut num = 0.0;
@@ -819,13 +956,19 @@ fn linear_slope(y: &[f64]) -> f64 {
         num += (xi - x_mean) * (yi - y_mean);
         den += (xi - x_mean).powi(2);
     }
-    if den.abs() < 1e-15 { 0.0 } else { num / den }
+    if den.abs() < 1e-15 {
+        0.0
+    } else {
+        num / den
+    }
 }
 
 /// Linear regression slope for arbitrary x and y vectors.
 fn linear_regression_slope(x: &[f64], y: &[f64]) -> f64 {
     let n = x.len();
-    if n < 2 { return 0.0; }
+    if n < 2 {
+        return 0.0;
+    }
     let x_mean = mean(x);
     let y_mean = mean(y);
     let mut num = 0.0;
@@ -834,12 +977,18 @@ fn linear_regression_slope(x: &[f64], y: &[f64]) -> f64 {
         num += (x[i] - x_mean) * (y[i] - y_mean);
         den += (x[i] - x_mean).powi(2);
     }
-    if den.abs() < 1e-15 { 0.0 } else { num / den }
+    if den.abs() < 1e-15 {
+        0.0
+    } else {
+        num / den
+    }
 }
 
 /// Trapezoidal integration (unnormalised).
 fn trapezoid(v: &[f64]) -> f64 {
-    if v.len() < 2 { return 0.0; }
+    if v.len() < 2 {
+        return 0.0;
+    }
     let mut s = 0.0;
     for i in 1..v.len() {
         s += (v[i - 1] + v[i]) / 2.0;
@@ -865,8 +1014,12 @@ mod tests {
                 pupil[i] = 0.2 + slope_per_ms * ms_post;
             }
             let trial = TrialResult {
-                trial_num: 1, block_num: 1, load: 1, distractor_type: 3,
-                response: Some("f".to_string()), reaction_time: 0.7,
+                trial_num: 1,
+                block_num: 1,
+                load: 1,
+                distractor_type: 3,
+                response: Some("f".to_string()),
+                reaction_time: 0.7,
                 correct: true,
                 pupil_series: pupil.iter().map(|&v| Some(v as f32)).collect(),
                 gaze_x_series: vec![Some(500.0); total_frames],
@@ -880,8 +1033,11 @@ mod tests {
             // (without the fix it would be ~33)
             if fps == 30.0 {
                 // Just check it's in the right ballpark
-                assert!(slope.abs() < 1e-2,
-                    "fps=30: slope {} is too large (unit fix not applied?)", slope);
+                assert!(
+                    slope.abs() < 1e-2,
+                    "fps=30: slope {} is too large (unit fix not applied?)",
+                    slope
+                );
             }
         }
     }
@@ -890,7 +1046,10 @@ mod tests {
     fn test_rf_prediction_from_json() {
         let json_path = std::path::Path::new("../models/rf_model.json");
         if !json_path.exists() {
-            eprintln!("Skipping RF test — rf_model.json not found at {:?}", json_path);
+            eprintln!(
+                "Skipping RF test — rf_model.json not found at {:?}",
+                json_path
+            );
             return;
         }
         let model = RfModelBundle::load(json_path).unwrap();

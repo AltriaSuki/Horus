@@ -156,7 +156,7 @@
     --primary-dark: var(--c-yellow-dark);
   }
 
-  /* ── Top bar ───────────────────────────────────────────────── */
+  /* Top bar */
   .top-bar {
     display: flex;
     align-items: center;
@@ -216,14 +216,14 @@
     background: var(--error);
   }
 
-  /* ── Main content ──────────────────────────────────────────── */
+  /* Main content */
   .main-content {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
   }
 
-  /* ── Bottom nav (Floating Pill) ───────────────────────────── */
+  /* Bottom nav (Floating Pill) */
   .bottom-nav {
     display: flex;
     position: fixed;

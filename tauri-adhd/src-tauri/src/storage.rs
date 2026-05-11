@@ -8,11 +8,11 @@
 //!        on adhd_reports; adds error_message on sessions; adds trials and
 //!        calibrations tables.
 
+use once_cell::sync::OnceCell;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
-use once_cell::sync::OnceCell;
 
 static DB: OnceCell<Mutex<Connection>> = OnceCell::new();
 
@@ -21,7 +21,8 @@ const SCHEMA_VERSION: u32 = 2;
 pub fn init_db(path: &Path) -> anyhow::Result<()> {
     let conn = Connection::open(path)?;
     // v1 baseline — kept IF NOT EXISTS so fresh DBs work too.
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         CREATE TABLE IF NOT EXISTS subjects (
             id TEXT PRIMARY KEY,
             display_name TEXT NOT NULL,
@@ -48,11 +49,13 @@ pub fn init_db(path: &Path) -> anyhow::Result<()> {
             model_info TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         );
-    ")?;
+    ",
+    )?;
 
     migrate(&conn)?;
 
-    DB.set(Mutex::new(conn)).map_err(|_| anyhow::anyhow!("DB already initialized"))?;
+    DB.set(Mutex::new(conn))
+        .map_err(|_| anyhow::anyhow!("DB already initialized"))?;
     Ok(())
 }
 
@@ -63,7 +66,8 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
     if ver < 2 {
         // ALTER TABLE ADD COLUMN is idempotent across fresh + existing DBs because
         // v1 baseline above only creates the minimal columns.
-        conn.execute_batch("
+        conn.execute_batch(
+            "
             ALTER TABLE adhd_reports ADD COLUMN attention_profile_json TEXT;
             ALTER TABLE adhd_reports ADD COLUMN block_stats_json TEXT;
             ALTER TABLE adhd_reports ADD COLUMN prob_std REAL;
@@ -95,7 +99,8 @@ fn migrate(conn: &Connection) -> anyhow::Result<()> {
                 validation_error_px REAL,
                 created_at TEXT DEFAULT (datetime('now'))
             );
-        ")?;
+        ",
+        )?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
 
@@ -130,20 +135,26 @@ pub fn create_subject(id: &str, name: &str, sex: Option<&str>) -> anyhow::Result
         "INSERT OR IGNORE INTO subjects (id, display_name, sex) VALUES (?1, ?2, ?3)",
         params![id, name, sex],
     )?;
-    Ok(Subject { id: id.to_string(), display_name: name.to_string(), sex: sex.map(String::from) })
+    Ok(Subject {
+        id: id.to_string(),
+        display_name: name.to_string(),
+        sex: sex.map(String::from),
+    })
 }
 
 pub fn list_subjects() -> anyhow::Result<Vec<Subject>> {
     let conn = db().lock().unwrap();
-    let mut stmt = conn.prepare(
-        "SELECT id, display_name, sex FROM subjects ORDER BY created_at DESC")?;
-    let rows = stmt.query_map([], |row| {
-        Ok(Subject {
-            id: row.get(0)?,
-            display_name: row.get(1)?,
-            sex: row.get(2)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let mut stmt =
+        conn.prepare("SELECT id, display_name, sex FROM subjects ORDER BY created_at DESC")?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(Subject {
+                id: row.get(0)?,
+                display_name: row.get(1)?,
+                sex: row.get(2)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
@@ -167,27 +178,39 @@ pub fn delete_subject(subject_id: &str) -> anyhow::Result<()> {
          WHERE session_id IN (SELECT id FROM sessions WHERE subject_id = ?1)",
         params![subject_id],
     )?;
-    tx.execute("DELETE FROM sessions WHERE subject_id = ?1", params![subject_id])?;
+    tx.execute(
+        "DELETE FROM sessions WHERE subject_id = ?1",
+        params![subject_id],
+    )?;
     tx.execute("DELETE FROM subjects WHERE id = ?1", params![subject_id])?;
 
     tx.commit()?;
     Ok(())
 }
 
-pub fn create_session(id: &str, subject_id: &str, kind: &str, mode: &str) -> anyhow::Result<SessionRow> {
+pub fn create_session(
+    id: &str,
+    subject_id: &str,
+    kind: &str,
+    mode: &str,
+) -> anyhow::Result<SessionRow> {
     let conn = db().lock().unwrap();
     conn.execute(
         "INSERT INTO sessions (id, subject_id, kind, mode, status) VALUES (?1, ?2, ?3, ?4, 'pending')",
         params![id, subject_id, kind, mode],
     )?;
     Ok(SessionRow {
-        id: id.to_string(), subject_id: subject_id.to_string(),
-        kind: kind.to_string(), mode: mode.to_string(),
-        status: "pending".to_string(), started_at: None, ended_at: None,
+        id: id.to_string(),
+        subject_id: subject_id.to_string(),
+        kind: kind.to_string(),
+        mode: mode.to_string(),
+        status: "pending".to_string(),
+        started_at: None,
+        ended_at: None,
     })
 }
 
-// ─── Session status transitions ─────────────────────────────────────
+// ─ Session status transitions
 
 pub fn mark_session_running(id: &str) -> anyhow::Result<()> {
     let conn = db().lock().unwrap();
@@ -216,10 +239,7 @@ pub fn mark_session_cancelled(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn save_report(
-    session_id: &str,
-    report: &crate::inference::AdhdReport,
-) -> anyhow::Result<()> {
+pub fn save_report(session_id: &str, report: &crate::inference::AdhdReport) -> anyhow::Result<()> {
     let conn = db().lock().unwrap();
     conn.execute(
         "INSERT OR REPLACE INTO adhd_reports
@@ -258,7 +278,8 @@ pub fn get_report(session_id: &str) -> anyhow::Result<Option<crate::inference::A
                 feature_values_json, feature_importance_json, model_info,
                 attention_profile_json, block_stats_json,
                 prob_std, ci95_low, ci95_high
-         FROM adhd_reports WHERE session_id = ?1")?;
+         FROM adhd_reports WHERE session_id = ?1",
+    )?;
     let mut rows = stmt.query_map(params![session_id], |row| {
         let fv: String = row.get(3)?;
         let fi: String = row.get(4)?;
@@ -301,7 +322,8 @@ pub fn get_session(session_id: &str) -> anyhow::Result<Option<SessionRow>> {
     let conn = db().lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, kind, mode, status, started_at, ended_at
-         FROM sessions WHERE id = ?1")?;
+         FROM sessions WHERE id = ?1",
+    )?;
     let mut rows = stmt.query_map(params![session_id], |row| {
         Ok(SessionRow {
             id: row.get(0)?,
@@ -324,18 +346,21 @@ pub fn list_subject_sessions(subject_id: &str) -> anyhow::Result<Vec<SessionRow>
     let conn = db().lock().unwrap();
     let mut stmt = conn.prepare(
         "SELECT id, subject_id, kind, mode, status, started_at, ended_at
-         FROM sessions WHERE subject_id = ?1 ORDER BY started_at DESC")?;
-    let rows = stmt.query_map(params![subject_id], |row| {
-        Ok(SessionRow {
-            id: row.get(0)?,
-            subject_id: row.get(1)?,
-            kind: row.get(2)?,
-            mode: row.get(3)?,
-            status: row.get(4)?,
-            started_at: row.get(5)?,
-            ended_at: row.get(6)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+         FROM sessions WHERE subject_id = ?1 ORDER BY started_at DESC",
+    )?;
+    let rows = stmt
+        .query_map(params![subject_id], |row| {
+            Ok(SessionRow {
+                id: row.get(0)?,
+                subject_id: row.get(1)?,
+                kind: row.get(2)?,
+                mode: row.get(3)?,
+                status: row.get(4)?,
+                started_at: row.get(5)?,
+                ended_at: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
@@ -344,16 +369,25 @@ pub fn delete_session(session_id: &str) -> anyhow::Result<()> {
     let conn = db().lock().unwrap();
     let tx = conn.unchecked_transaction()?;
 
-    tx.execute("DELETE FROM adhd_reports WHERE session_id = ?1", params![session_id])?;
-    tx.execute("DELETE FROM trials WHERE session_id = ?1", params![session_id])?;
-    tx.execute("DELETE FROM calibrations WHERE session_id = ?1", params![session_id])?;
+    tx.execute(
+        "DELETE FROM adhd_reports WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    tx.execute(
+        "DELETE FROM trials WHERE session_id = ?1",
+        params![session_id],
+    )?;
+    tx.execute(
+        "DELETE FROM calibrations WHERE session_id = ?1",
+        params![session_id],
+    )?;
     tx.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])?;
 
     tx.commit()?;
     Ok(())
 }
 
-// ─── Trial-level persistence ────────────────────────────────────────
+// ─ Trial-level persistence
 
 /// Persist a single trial's metadata + raw pupil/gaze series (JSON blobs)
 /// so later replay/QC tooling can reconstruct the session.
@@ -377,7 +411,7 @@ pub fn save_trial(session_id: &str, trial: &crate::inference::TrialResult) -> an
             trial.block_num,
             trial.load,
             trial.distractor_type,
-            // TrialResult has no is_target field on the Rust side yet —
+            // TrialResult has no is_target field on the Rust side yet
             // store NULL; commands.rs can switch to a richer payload later.
             Option::<i64>::None,
             trial.response,
@@ -391,7 +425,7 @@ pub fn save_trial(session_id: &str, trial: &crate::inference::TrialResult) -> an
     Ok(())
 }
 
-// ─── Calibration QC persistence ─────────────────────────────────────
+// ─ Calibration QC persistence
 
 pub fn save_calibration(
     session_id: &str,

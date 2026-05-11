@@ -31,12 +31,12 @@
   let totalTrialsTargetValue = $state(160);
 
   const encouragements = [
-    '你做得很棒',
-    '继续加油',
-    '保持专注',
-    '你真厉害',
+    '看屏幕中间',
+    '慢慢来',
+    '准备下一题',
+    '注意圆点位置',
     '快要完成了',
-    '坚持住',
+    '按提示作答',
   ];
   let encourageIndex = $state(0);
   let encourageTimer = null;
@@ -73,10 +73,7 @@
   }
 
   function handleSternbergCancel() {
-    // User bailed mid-task via ESC. The already-submitted trial results are
-    // safe in the Rust-side SESSION state; they'll be wiped when the next
-    // start_screening runs (commands.rs resets trial_results there).
-    // No cancel_session command on the backend yet — just leave the page.
+    // Backend cancellation is not wired here yet; leave the task view.
     goto('/screening');
   }
 
@@ -111,7 +108,6 @@
     goto('/screening');
   }
 
-  // SVG progress ring
   const ringSize = 240;
   const strokeWidth = 16;
   const radius = (ringSize - strokeWidth) / 2;
@@ -137,7 +133,6 @@
   {:else if currentPhase === PHASES.GENERATING_REPORT}
     <div class="overlay-screen">
       <div class="report-card">
-        <!-- Big animated progress ring -->
         <div class="ring-wrapper">
           <svg width={ringSize} height={ringSize} class="ring-svg">
             <circle cx={ringSize/2} cy={ringSize/2} r={radius}
@@ -157,10 +152,9 @@
         </div>
 
         <div class="report-spinner"></div>
-        <h2 class="report-title">正在分析注意力表现...</h2>
-        <p class="report-sub">正在提取 27 个注意力特征</p>
+        <h2 class="report-title">正在整理本次结果...</h2>
+        <p class="report-sub">反应、瞳孔和注视特征正在写入报告</p>
 
-        <!-- Stats row -->
         <div class="stats-row">
           <div class="stat-chip">
             <div class="stat-icon" style="background: rgba(78,205,196,0.15);">
@@ -231,7 +225,7 @@
     background: #FFF8F0;
   }
 
-  /* ── Report generating ─────────────────────────────────── */
+  /* Report */
 
   .report-card {
     display: flex;
@@ -344,7 +338,7 @@
     color: #2B1810;
   }
 
-  /* ── Error screen ───────────────────────────────────────── */
+  /* Error */
 
   .error-card {
     display: flex;

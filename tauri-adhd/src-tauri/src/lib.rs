@@ -1,20 +1,17 @@
-//! ADHD screening system — Rust backend.
+//! Rust backend for the ADHD screening app.
 //!
-//! Faithful port of the Python engine (`engine/adhd_engine/`), preserving:
-//!   - Rojas-Líbano et al. 2019 Sternberg paradigm timing
-//!   - 27-feature extraction pipeline (with 30 Hz slope unit fix)
-//!   - Random Forest prediction logic (300 trees from JSON)
-//!   - 30 Hz webcam adaptations (pupil smoothing, baseline frames, etc.)
+//! Keeps the Sternberg task timing, feature extraction, random-forest
+//! inference, camera capture, and local SQLite storage behind Tauri commands.
 
+pub mod camera;
+pub mod commands;
+pub mod eye_tracker_server;
+pub mod face_mesh;
+pub mod game;
 pub mod gaze_math;
 pub mod inference;
-pub mod storage;
-pub mod commands;
-pub mod face_mesh;
 pub mod pipeline;
-pub mod camera;
-pub mod eye_tracker_server;
-pub mod game;
+pub mod storage;
 
 use tauri::Manager;
 
@@ -30,8 +27,7 @@ pub fn run() {
                 .expect("failed to resolve app data dir");
             std::fs::create_dir_all(&app_dir).ok();
             let db_path = app_dir.join("adhd.db");
-            storage::init_db(&db_path)
-                .expect("failed to init database");
+            storage::init_db(&db_path).expect("failed to init database");
             log::info!("DB at {:?}", db_path);
             Ok(())
         })

@@ -11,14 +11,12 @@
   let gamePid = $state(null);
   let error = $state(null);
 
-  // Eye tracker state: 'stopped' | 'calibrating' | 'calibrated' | 'serving' | 'error'
+  // 'stopped' | 'calibrating' | 'calibrated' | 'serving' | 'error'
   let eyeTrackerStatus = $state('stopped');
   let eyeTrackerStarting = $state(false);
   let eyeTrackerLogs = $state([]);
-  // Whether to show the fullscreen calibration canvas
   let showCalibrationCanvas = $state(false);
 
-  // Gaze monitor
   let gazeCanvas = $state(null);
   let gazeX = $state(0);
   let gazeY = $state(0);
@@ -28,7 +26,6 @@
   let unlistenEyeLog = null;
 
   onMount(async () => {
-    // Load subjects
     try {
       subjects = await invoke('list_subjects');
       if (subjects.length > 0) {
@@ -40,14 +37,12 @@
       loadingSubjects = false;
     }
 
-    // Check if eye tracker is already running
     try {
       eyeTrackerStatus = await invoke('get_eye_tracker_status');
     } catch (e) {
       console.error('Failed to get eye tracker status:', e);
     }
 
-    // Listen for gaze frames
     unlistenGaze = await listen('gaze_frame', (event) => {
       const { x, y, valid } = event.payload;
       gazeX = x;
@@ -56,13 +51,11 @@
       drawGaze();
     });
 
-    // Listen for eye tracker status changes
     unlistenEyeStatus = await listen('eye_tracker_status', (event) => {
       eyeTrackerStatus = event.payload;
       eyeTrackerStarting = false;
     });
 
-    // Listen for eye tracker log messages
     unlistenEyeLog = await listen('eye_tracker_log', (event) => {
       eyeTrackerLogs = [...eyeTrackerLogs.slice(-49), event.payload];
     });
@@ -107,10 +100,8 @@
     error = null;
     eyeTrackerLogs = [];
     try {
-      // Start Python process in headless mode (no pygame window)
       await invoke('start_eye_tracker', { headless: true });
       eyeTrackerStatus = 'calibrating';
-      // Show the in-app calibration canvas
       showCalibrationCanvas = true;
     } catch (e) {
       const msg = typeof e === 'string' ? e : (e?.message ?? String(e));
@@ -127,7 +118,6 @@
 
   function handleCalibrationCancel() {
     showCalibrationCanvas = false;
-    // Stop the Python process since calibration was cancelled
     invoke('stop_eye_tracker').catch(() => {});
     eyeTrackerStatus = 'stopped';
     eyeTrackerStarting = false;
@@ -172,7 +162,6 @@
     }
   }
 
-  // Derived: whether eye tracker is ready (calibrated or serving)
   let eyeTrackerReady = $derived(
     eyeTrackerStatus === 'calibrated' || eyeTrackerStatus === 'serving'
   );
@@ -186,28 +175,22 @@
 {/if}
 
 <div class="page-content">
-  <!-- Hero card -->
   <div class="hero-card animate-fade-in">
     <div class="hero-bg animate-float">
       <svg class="hero-icon" width="80" height="80" viewBox="0 0 80 80" fill="none">
         <circle cx="40" cy="40" r="40" fill="rgba(255,255,255,0.2)"/>
-        <!-- Gamepad body -->
         <rect x="15" y="25" width="50" height="30" rx="15" fill="white"/>
-        <!-- D-pad -->
         <rect x="23" y="36" width="10" height="4" rx="1" fill="var(--primary-dark)"/>
         <rect x="26" y="33" width="4" height="10" rx="1" fill="var(--primary-dark)"/>
-        <!-- Buttons -->
         <circle cx="50" cy="42" r="4" fill="var(--primary-dark)"/>
         <circle cx="58" cy="35" r="4" fill="var(--primary-dark)"/>
-        <!-- Smile -->
         <path d="M35 45 Q 40 48 45 45" stroke="var(--primary-dark)" stroke-width="2.5" stroke-linecap="round" fill="none"/>
       </svg>
     </div>
     <h1 class="hero-title">注意力训练</h1>
-    <p class="hero-subtitle">通过眼控互动游戏提升专注力与工作记忆</p>
+    <p class="hero-subtitle">先完成眼动校准，再进入互动训练游戏</p>
   </div>
 
-  <!-- Subject picker -->
   <div class="picker-section animate-fade-in">
     <h2 class="section-title">选择被试</h2>
     {#if loadingSubjects}
@@ -230,13 +213,12 @@
     <div class="error-msg">{error}</div>
   {/if}
 
-  <!-- Step 1: Calibrate eye tracker -->
   <div class="step-section animate-fade-in">
     <h2 class="section-title">
       <span class="step-badge" class:done={eyeTrackerReady}>1</span>
       校准眼动追踪
     </h2>
-    <p class="step-desc">点击开始校准后，请依次注视每个校准点并点击。校准完成后即可启动游戏。</p>
+    <p class="step-desc">点击开始后，按顺序看向每个校准点并点击。完成后即可启动游戏。</p>
 
     <div class="step-actions">
       {#if eyeTrackerStatus === 'stopped' || eyeTrackerStatus === 'error'}
@@ -267,7 +249,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="20,6 9,17 4,12"/>
           </svg>
-          校准完成，眼动服务已就绪
+          校准完成，可以启动游戏
         </div>
         <button class="btn-text" onclick={startEyeTracker}>重新校准</button>
       {/if}
@@ -281,13 +263,12 @@
     {/if}
   </div>
 
-  <!-- Step 2: Launch game -->
   <div class="step-section animate-fade-in">
     <h2 class="section-title">
       <span class="step-badge" class:done={gamePid}>2</span>
       启动训练游戏
     </h2>
-    <p class="step-desc">游戏启动后，按 F2 切换为眼动控制模式，用眼睛控制角色。</p>
+    <p class="step-desc">游戏启动后按 F2 切换到眼动控制模式。</p>
 
     <div class="step-actions">
       {#if gamePid}
@@ -317,7 +298,6 @@
     </div>
   </div>
 
-  <!-- Gaze monitor -->
   <div class="gaze-section animate-fade-in">
     <h2 class="section-title">实时注视监控</h2>
     <div class="gaze-monitor card">

@@ -25,7 +25,57 @@
   let unlistenEyeStatus = null;
   let unlistenEyeLog = null;
 
+  // ---- 游戏难度配置 ----
+  let snakeSpeed = $state(5);
+  let poisonAppleRate = $state(3);
+  let bombRate = $state(3);
+  let gameDuration = $state(5);
+  let configSaving = $state(false);
+
+  const PRESETS = {
+    easy:   { snakeSpeed: 3, poisonAppleRate: 1, bombRate: 1, gameDuration: 8 },
+    normal: { snakeSpeed: 5, poisonAppleRate: 3, bombRate: 3, gameDuration: 5 },
+    hard:   { snakeSpeed: 8, poisonAppleRate: 6, bombRate: 6, gameDuration: 3 },
+  };
+
+  function applyPreset(name) {
+    const p = PRESETS[name];
+    snakeSpeed = p.snakeSpeed;
+    poisonAppleRate = p.poisonAppleRate;
+    bombRate = p.bombRate;
+    gameDuration = p.gameDuration;
+    saveConfig();
+  }
+
+  async function saveConfig() {
+    configSaving = true;
+    try {
+      await invoke('save_game_config', {
+        config: { snakeSpeed, poisonAppleRate, bombRate, gameDuration }
+      });
+    } catch (e) {
+      console.error('Failed to save game config:', e);
+    } finally {
+      configSaving = false;
+    }
+  }
+
+  async function loadConfig() {
+    try {
+      const cfg = await invoke('load_game_config');
+      if (cfg && typeof cfg === 'object') {
+        if (cfg.snakeSpeed != null) snakeSpeed = cfg.snakeSpeed;
+        if (cfg.poisonAppleRate != null) poisonAppleRate = cfg.poisonAppleRate;
+        if (cfg.bombRate != null) bombRate = cfg.bombRate;
+        if (cfg.gameDuration != null) gameDuration = cfg.gameDuration;
+      }
+    } catch (e) {
+      console.error('Failed to load game config:', e);
+    }
+  }
+
   onMount(async () => {
+    loadConfig();
     try {
       subjects = await invoke('list_subjects');
       if (subjects.length > 0) {
@@ -212,6 +262,40 @@
   {#if error}
     <div class="error-msg">{error}</div>
   {/if}
+
+  <!-- 游戏难度设置 -->
+  <div class="difficulty-section animate-fade-in">
+    <h2 class="section-title">游戏难度设置</h2>
+    <p class="config-hint">在启动游戏前调节难度参数，启动后自动生效</p>
+
+    <div class="preset-row">
+      {#each [['easy', '简单'], ['normal', '普通'], ['hard', '困难']] as [key, label]}
+        <button class="preset-btn" onclick={() => applyPreset(key)}>{label}</button>
+      {/each}
+    </div>
+
+    <div class="config-grid">
+      <label class="config-item">
+        <span>蛇的移动速度 <b>{snakeSpeed}</b></span>
+        <input type="range" min="1" max="10" step="1" bind:value={snakeSpeed} oninput={saveConfig} />
+      </label>
+      <label class="config-item">
+        <span>毒苹果生成频率 <b>{poisonAppleRate}</b></span>
+        <input type="range" min="1" max="10" step="1" bind:value={poisonAppleRate} oninput={saveConfig} />
+      </label>
+      <label class="config-item">
+        <span>炸弹生成频率 <b>{bombRate}</b></span>
+        <input type="range" min="1" max="10" step="1" bind:value={bombRate} oninput={saveConfig} />
+      </label>
+      <label class="config-item">
+        <span>游戏时长 (分钟)</span>
+        <input class="input-field" type="number" min="1" max="30" bind:value={gameDuration} oninput={saveConfig} />
+      </label>
+    </div>
+    {#if configSaving}
+      <p class="config-status">保存中...</p>
+    {/if}
+  </div>
 
   <div class="step-section animate-fade-in">
     <h2 class="section-title">
@@ -531,5 +615,61 @@
   .gaze-label {
     font-size: var(--font-size-sm);
     color: var(--text-muted);
+  }
+
+  /* Difficulty config */
+  .difficulty-section {
+    margin-bottom: var(--space-xl);
+    padding: var(--space-lg);
+    background: var(--surface-solid);
+    border-radius: var(--radius-lg);
+    border: 2px dashed rgba(255, 140, 66, 0.35);
+  }
+  .config-hint {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    margin-bottom: var(--space-md);
+  }
+  .preset-row {
+    display: flex;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+  }
+  .preset-btn {
+    padding: 6px 18px;
+    border: 2px solid var(--primary);
+    background: transparent;
+    color: var(--primary);
+    border-radius: var(--radius-pill);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .preset-btn:hover {
+    background: var(--primary);
+    color: white;
+  }
+  .config-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-md);
+  }
+  .config-item {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .config-item input[type="range"] {
+    width: 100%;
+    accent-color: var(--primary);
+  }
+  .config-status {
+    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    margin-top: var(--space-sm);
+    text-align: right;
   }
 </style>

@@ -1292,3 +1292,34 @@ pub fn eye_tracker_start_server() -> Result<(), String> {
     drop(guard);
     Ok(())
 }
+
+// ---- Game difficulty config ----
+
+/// Save game difficulty configuration to `game_config.json` beside the game exe.
+#[tauri::command]
+pub fn save_game_config(config: serde_json::Value) -> Result<(), String> {
+    let game_dir = game::resolve_game_exe()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .ok_or("未找到游戏目录")?;
+    let config_path = game_dir.join("game_config.json");
+    let json = serde_json::to_string_pretty(&config).map_err(|e| e.to_string())?;
+    std::fs::write(&config_path, json).map_err(|e| format!("写入配置文件失败: {}", e))?;
+    log::info!("Game config saved to {:?}", config_path);
+    Ok(())
+}
+
+/// Load game difficulty configuration from `game_config.json`.
+/// Returns an empty object if the file does not exist.
+#[tauri::command]
+pub fn load_game_config() -> Result<serde_json::Value, String> {
+    let game_dir = game::resolve_game_exe()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .ok_or("未找到游戏目录")?;
+    let config_path = game_dir.join("game_config.json");
+    if !config_path.exists() {
+        return Ok(serde_json::json!({}));
+    }
+    let content =
+        std::fs::read_to_string(&config_path).map_err(|e| format!("读取配置文件失败: {}", e))?;
+    serde_json::from_str(&content).map_err(|e| format!("解析配置文件失败: {}", e))
+}

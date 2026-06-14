@@ -57,6 +57,8 @@ pub fn run() {
             commands::eye_tracker_collect_point,
             commands::eye_tracker_train,
             commands::eye_tracker_start_server,
+            commands::save_game_config,
+            commands::load_game_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
